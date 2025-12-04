@@ -290,6 +290,80 @@ body {
   color: #6b7280;
 }
 
+.app-footer {
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  margin-left: -1.5rem;
+  margin-right: -1.5rem;
+  margin-bottom: -1.5rem;
+  padding: 2rem 1.5rem;
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.footer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.footer-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #111827;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.footer-links {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #4b5563;
+  text-decoration: none;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+
+  &:hover {
+    color: #111827;
+    background: rgba(59, 130, 246, 0.1);
+  }
+
+  span {
+    line-height: 1;
+  }
+}
+
+.footer-divider {
+  width: 1px;
+  height: 40px;
+  background: #d1d5db;
+}
+
+.footer-text {
+  font-size: 0.875rem;
+  color: #6b7280;
+  text-align: center;
+  flex: 1;
+  min-width: 200px;
+}
+
 @media (max-width: 1024px) {
   .page-header {
     flex-direction: column;

@@ -5,9 +5,11 @@
         "faststart",
         "hdrgm",
         "libx",
+        "mjpg",
         "movflags",
         "playhead",
         "setpts",
+        "sirrus",
         "xmpmeta",
         "xmptk"
     ]

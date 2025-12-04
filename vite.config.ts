@@ -18,6 +18,10 @@ export default defineConfig({
       sassVariables: "src/quasar-variables.sass",
     }),
   ],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",

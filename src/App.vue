@@ -4,8 +4,8 @@
       <q-page class="app-page q-pa-md q-pa-lg-md">
         <div class="page-header">
           <div>
-            <div class="title">GIF / 视频 → 安卓 Motion Photo</div>
-            <div class="subtitle">纯前端版，基于 FFmpeg.wasm 与 Quasar + Vue 3</div>
+            <div class="title">GIF / 视频 → 安卓 Motion Photo（动态照片）</div>
+            <div class="subtitle">纯前端版，基于 FFmpeg.wasm</div>
           </div>
           <div class="status-chip">
             <q-badge color="primary" outline v-if="ffmpegReady">FFmpeg 已加载</q-badge>
@@ -14,7 +14,7 @@
         </div>
 
         <q-banner class="note-banner q-mb-lg" rounded>
-          ⚡ 所有转码与合成都在浏览器内完成，无需后端。运行时需带上 COOP / COEP 头以启用 SharedArrayBuffer（Vite dev server 已默认开启）。
+          ⚡ 所有转码与合成都在浏览器内完成，无需后端。保证你的数据安全。
         </q-banner>
 
         <div class="content-grid">
@@ -145,6 +145,38 @@
             @convert="convertToMotionPhoto"
           />
         </div>
+
+        <footer class="app-footer q-mt-xl">
+          <div class="footer-content">
+            <div class="footer-section">
+              <div class="footer-title">快速访问</div>
+              <div class="footer-links">
+                <a href="https://blog.sirrus.cc" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="feed" size="sm" />
+                  <span>博客</span>
+                </a>
+                <a href="https://anh.sirrus.cc" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="auto_stories" size="sm" />
+                  <span>小说助手</span>
+                </a>
+                <a href="https://guides.sirrus.cc" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="checklist" size="sm" />
+                  <span>在线检查单</span>
+                </a>
+                <a href="https://lite-editor.sirrus.cc" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="edit" size="sm" />
+                  <span>轻量版编辑器</span>
+                </a>
+              </div>
+            </div>
+            <div class="footer-divider"></div>
+            <div class="footer-section">
+              <div class="footer-text">
+                © 2025 Andrea Frederica. 所有工具均基于开源技术构建。
+              </div>
+            </div>
+          </div>
+        </footer>
       </q-page>
     </q-page-container>
   </q-layout>
