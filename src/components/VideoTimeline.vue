@@ -30,9 +30,11 @@
           v-for="[timestamp, url] of thumbnailUrls.entries()"
           :key="timestamp"
           class="thumbnail"
-          :style="{ 
-            backgroundImage: `url(${url})`, 
-            left: `calc(8px + ${(timestamp / safeDuration) * 100}%)`
+          :style="{
+            backgroundImage: `url(${url})`,
+            left: `calc(8px + ${(timestamp / safeDuration) * 100}%)`,
+            width: `${thumbnailWidth}px`,
+            transform: `translateX(-${thumbnailWidth / 2}px)`
           }"
         ></div>
       </div>
@@ -84,7 +86,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type { FfmpegClient } from "../services/ffmpegClient";
+import type { UnifiedFFmpegClient } from "../services/ffmpegClientFactory";
 
 const props = defineProps<{
   duration: number;
@@ -94,7 +96,8 @@ const props = defineProps<{
   currentTime: number;
   disabled?: boolean;
   playing?: boolean;
-  ffmpegClient?: FfmpegClient;
+  ffmpegClient?: UnifiedFFmpegClient;
+  sessionId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -109,6 +112,7 @@ const emit = defineEmits<{
 const trackerRef = ref<HTMLDivElement | null>(null);
 const thumbnailUrls = ref<Map<number, string>>(new Map());
 const isGeneratingThumbnails = ref(false);
+const thumbnailWidth = ref(0); // 实际缩略图宽度（像素）
 
 const safeDuration = computed(() => Math.max(0, props.duration || 0));
 const durationLabel = computed(() => `${safeDuration.value.toFixed(2)} s`);
@@ -273,6 +277,9 @@ onBeforeUnmount(() => {
   document.body.style.userSelect = "auto";
   // Clean up thumbnail URLs
   thumbnailUrls.value.forEach((url) => URL.revokeObjectURL(url));
+  // 移除窗口大小监听
+  window.removeEventListener("resize", handleWindowResize);
+  if (resizeTimer) clearTimeout(resizeTimer);
 });
 
 function handleTogglePlay() {
@@ -302,6 +309,49 @@ function setCurrentAsEnd() {
   }
 }
 
+/**
+ * 简化版：根据实际缩略图宽度，计算最优的缩略图间隔
+ * 实际缩略图宽度会在生成第一张时测量
+ */
+function calculateThumbnailInterval(): { interval: number; thumbnailCount: number } {
+  const timelineWidth = getWidth() - 16; // 减去边距
+  const actualThumbnailWidth = thumbnailWidth.value || 96; // 使用实际宽度或默认值
+  
+  if (timelineWidth <= 0 || actualThumbnailWidth <= 0 || safeDuration.value <= 0) {
+    return { interval: safeDuration.value, thumbnailCount: 1 };
+  }
+
+  // 计算时间轴能放多少张缩略图（紧密排列，不重叠）
+  const maxThumbnails = Math.floor(timelineWidth / actualThumbnailWidth);
+  
+  if (maxThumbnails <= 0) {
+    return { interval: safeDuration.value, thumbnailCount: 1 };
+  }
+
+  // 计算时间间隔
+  let interval = Math.ceil(safeDuration.value / maxThumbnails * 10) / 10;
+  
+  // 调整间隔到合理的数值
+  const intervals = [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120];
+  let bestInterval = intervals[0];
+  for (const candidate of intervals) {
+    if (candidate >= interval) {
+      bestInterval = candidate;
+      break;
+    }
+  }
+  
+  if (bestInterval > safeDuration.value) {
+    bestInterval = safeDuration.value;
+  }
+  
+  const thumbnailCount = Math.ceil(safeDuration.value / bestInterval) + 1;
+  
+  console.log(`缩略图计算: 时间轴宽度=${timelineWidth}px, 实际缩略图宽度=${actualThumbnailWidth}px, 总时长=${safeDuration.value.toFixed(2)}s, 间隔=${bestInterval}s, 数量=${thumbnailCount}`);
+  
+  return { interval: bestInterval, thumbnailCount };
+}
+
 // Generate thumbnails for the timeline
 const generateThumbnails = async () => {
   if (!props.ffmpegClient || safeDuration.value <= 0) return;
@@ -316,37 +366,89 @@ const generateThumbnails = async () => {
     await props.ffmpegClient.ensureLoaded();
     console.log("FFmpeg 已加载");
     
-    // 生成覆盖整个视频时长的缩略图，每2秒一张
-    const step = 2;
-    const urls = new Map<number, string>();
-    const totalFrames = Math.ceil(safeDuration.value / step);
+    // 先生成第一张缩略图以测量实际宽度
+    let firstThumbnailData: Uint8Array | null = null;
+    try {
+      firstThumbnailData = await props.ffmpegClient.generateThumbnail(0, props.sessionId);
+      const buffer = firstThumbnailData.buffer.slice(firstThumbnailData.byteOffset, firstThumbnailData.byteOffset + firstThumbnailData.byteLength) as ArrayBuffer;
+      const blob = new Blob([buffer], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+      
+      // 测量实际缩略图尺寸并计算显示宽度
+      await new Promise<void>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          // 缩略图容器的固定高度
+          const targetHeight = 42;
+          // 保持宽高比计算显示宽度
+          const aspectRatio = img.width / img.height;
+          thumbnailWidth.value = Math.round(aspectRatio * targetHeight);
+          console.log(`检测到缩略图实际尺寸: ${img.width}px × ${img.height}px，显示宽度: ${thumbnailWidth.value}px`);
+          resolve();
+        };
+        img.onerror = () => {
+          console.warn("加载缩略图用于测量失败，使用默认宽度 80px");
+          thumbnailWidth.value = 80;
+          resolve();
+        };
+        img.src = url;
+      });
+      
+      thumbnailUrls.value.set(0, url);
+    } catch (error) {
+      console.error("生成第一张缩略图失败:", error);
+      thumbnailWidth.value = 80; // 使用默认值
+    }
     
-    console.log(`将生成 ${totalFrames + 1} 张缩略图`);
+    // 根据期望的缩略图密度计算时间间隔
+    // 我们希望每5秒一张缩略图作为基准，但最小间隔2秒，最大间隔15秒
+    let interval = 5; // 默认5秒一张
+    if (safeDuration.value < 30) {
+      interval = 2; // 短视频增加密度
+    } else if (safeDuration.value > 300) {
+      interval = 15; // 长视频减少密度
+    }
+
+    // 调整间隔到合理的数值
+    const intervals = [1, 2, 5, 10, 15, 30, 60];
+    let bestInterval = intervals[0];
+    for (const candidate of intervals) {
+      if (candidate >= interval) {
+        bestInterval = candidate;
+        break;
+      }
+    }
+
+    const thumbnailCount = Math.ceil(safeDuration.value / bestInterval) + 1;
+    console.log(`缩略图生成策略: 总时长=${safeDuration.value.toFixed(1)}s, 间隔=${bestInterval}s, 预计数量=${thumbnailCount}, 缩略图宽度=${thumbnailWidth.value}px`);
     
-    for (let i = 0; i <= totalFrames; i++) {
-      const time = Math.min(i * step, safeDuration.value);
+    // 生成剩余缩略图
+    const urls = new Map<number, string>(thumbnailUrls.value);
+    
+    for (let i = 1; i < thumbnailCount; i++) {
+      const time = Math.min(i * bestInterval, safeDuration.value);
       const key = Math.floor(time * 10) / 10; // 精确到 0.1 秒
       
       // 检查是否已有缓存
-      if (thumbnailUrls.value.has(key)) {
-        urls.set(key, thumbnailUrls.value.get(key)!);
-        const percentage = Math.round(((i + 1) / (totalFrames + 1)) * 100);
-        emit("thumbnail-progress", { current: i + 1, total: totalFrames + 1, percentage });
+      if (urls.has(key)) {
+        const percentage = Math.round(((i + 1) / thumbnailCount) * 100);
+        emit("thumbnail-progress", { current: i + 1, total: thumbnailCount, percentage });
         continue;
       }
       
       try {
-        console.log(`生成第 ${i + 1}/${totalFrames + 1} 张，时间点: ${time.toFixed(2)}s`);
-        const data = await props.ffmpegClient.generateThumbnail(time);
-        const blob = new Blob([data], { type: "image/jpeg" });
+        console.log(`生成第 ${i + 1}/${thumbnailCount} 张，时间点: ${time.toFixed(2)}s`);
+        const data = await props.ffmpegClient.generateThumbnail(time, props.sessionId);
+        const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+        const blob = new Blob([buffer], { type: "image/jpeg" });
         const url = URL.createObjectURL(blob);
         urls.set(key, url);
         // 实时更新显示
         thumbnailUrls.value = new Map(urls);
         
         // 发送进度更新
-        const percentage = Math.round(((i + 1) / (totalFrames + 1)) * 100);
-        emit("thumbnail-progress", { current: i + 1, total: totalFrames + 1, percentage });
+        const percentage = Math.round(((i + 1) / thumbnailCount) * 100);
+        emit("thumbnail-progress", { current: i + 1, total: thumbnailCount, percentage });
       } catch (error) {
         console.error(`生成缩略图失败 (${time}s):`, error);
       }
@@ -381,6 +483,24 @@ watch(() => props.ffmpegClient, (newClient, oldClient) => {
     console.log("VideoTimeline: 没有 FFmpeg 客户端");
   }
 }, { immediate: true });
+
+// 监听窗口大小变化，重新计算缩略图间隔
+let resizeTimer: number | undefined;
+const handleWindowResize = () => {
+  // 防抖处理
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    if (props.ffmpegClient && thumbnailUrls.value.size > 0) {
+      console.log("窗口大小变化，重新生成缩略图");
+      generateThumbnails();
+    }
+  }, 500);
+};
+
+// 添加窗口大小监听
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", handleWindowResize);
+}
 </script>
 
 <style scoped>
@@ -509,14 +629,12 @@ watch(() => props.ffmpegClient, (newClient, oldClient) => {
 .thumbnail {
   position: absolute;
   top: 0;
-  width: 80px;
   height: 42px;
   background-size: cover;
   background-repeat: no-repeat;
   background-position: center;
   opacity: 0.7;
   border-right: 1px solid rgba(255, 255, 255, 0.3);
-  transform: translateX(-40px);
 }
 
 .timeline-progress {

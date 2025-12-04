@@ -101,26 +101,47 @@ export function createBackendFFmpegClient(options: Options): BackendFFmpegClient
     },
 
     async transcodeSource(file: File) {
+      console.log("后端转码: 准备上传文件", { fileName: file.name, fileSize: file.size, fileType: file.type });
+      
       const formData = new FormData();
       formData.append("file", file);
 
-      const resp = await fetch(`${baseUrl}/prepare`, {
-        method: "POST",
-        headers: buildHeaders(),
-        body: formData,
-      });
+      try {
+        const resp = await fetch(`${baseUrl}/prepare`, {
+          method: "POST",
+          headers: buildHeaders(),
+          body: formData,
+        });
 
-      if (!resp.ok) {
-        const detail = await resp.json().catch(() => ({}));
-        throw new Error(`转码失败: ${detail.detail || resp.statusText}`);
+        console.log("后端 /prepare 响应:", { status: resp.status, statusText: resp.statusText });
+
+        if (!resp.ok) {
+          const detail = await resp.json().catch(() => ({}));
+          throw new Error(`转码失败: ${detail.detail || resp.statusText}`);
+        }
+
+        const data = await resp.json();
+        console.log("后端转码结果:", { 
+          sessionId: data.session_id, 
+          previewUrl: data.preview_url,
+          duration: data.duration,
+          hasSessionId: !!data.session_id,
+          hasPreviewUrl: !!data.preview_url
+        });
+        
+        return {
+          sessionId: data.session_id,
+          previewUrl: data.preview_url,
+          duration: data.duration,
+        };
+      } catch (err) {
+        console.error("后端转码请求失败:", {
+          error: err,
+          message: err instanceof Error ? err.message : String(err),
+          url: `${baseUrl}/prepare`
+        });
+        throw err;
       }
-
-      const data = await resp.json();
-      return {
-        sessionId: data.session_id,
-        previewUrl: data.preview_url,
-        duration: data.duration,
-      };
     },
 
     async convertClipAndFrames(params: {

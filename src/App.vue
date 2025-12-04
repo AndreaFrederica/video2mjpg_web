@@ -53,7 +53,7 @@
             <q-card-section>
               <div class="section-title">预览</div>
               <div class="video-shell">
-                <video ref="videoRef" class="preview-video" controls playsinline></video>
+                <video ref="videoRef" class="preview-video" controls playsinline crossorigin="anonymous"></video>
               </div>
               <div class="status-text">{{ videoStatus }}</div>
               <div v-if="isPrepareProgress" class="progress-container q-mt-sm">
@@ -100,6 +100,7 @@
               :playing="isPlaying"
               :disabled="!previewReady"
               :ffmpeg-client="enableThumbnails && previewReady ? ffmpegClient : undefined"
+              :session-id="backendSessionId"
               @update:start="handleStartInput"
               @update:end="handleEndInput"
               @update:cover="handleCoverInput"
@@ -248,17 +249,26 @@ function loadSettings() {
   const savedMode = localStorage.getItem(STORAGE_KEYS.PROCESSING_MODE) as ProcessingMode | null;
   if (savedMode) {
     processingMode.value = savedMode;
+    console.log("已恢复处理模式:", savedMode);
   }
 
   const savedUrl = localStorage.getItem(STORAGE_KEYS.BACKEND_URL);
   if (savedUrl) {
     backendUrl.value = savedUrl;
+    console.log("已恢复后端 URL:", savedUrl);
   }
 
   const savedToken = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
   if (savedToken) {
     authToken.value = savedToken;
+    console.log("已恢复身份验证令牌");
   }
+  
+  return {
+    modeChanged: !!savedMode,
+    urlChanged: !!savedUrl,
+    tokenChanged: !!savedToken,
+  };
 }
 
 function initFFmpegClient() {
@@ -448,15 +458,45 @@ function waitForVideoMetadata(el: HTMLVideoElement) {
       resolve(el.duration);
       return;
     }
-    const onLoaded = () => {
+    
+    const timeout = setTimeout(() => {
       el.removeEventListener("loadedmetadata", onLoaded);
       el.removeEventListener("error", onError);
-      resolve(el.duration);
+      reject(new Error("视频元数据加载超时（5秒）"));
+    }, 5000);
+    
+    const onLoaded = () => {
+      clearTimeout(timeout);
+      el.removeEventListener("loadedmetadata", onLoaded);
+      el.removeEventListener("error", onError);
+      const duration = el.duration;
+      if (!Number.isFinite(duration) || duration <= 0) {
+        reject(new Error(`无效的视频时长: ${duration}`));
+      } else {
+        resolve(duration);
+      }
     };
     const onError = () => {
+      clearTimeout(timeout);
       el.removeEventListener("loadedmetadata", onLoaded);
       el.removeEventListener("error", onError);
-      reject(new Error("无法读取视频元数据"));
+      const errorCode = el.error?.code || -1;
+      const errorMsg = el.error?.message || "未知错误";
+      const errorDetails = {
+        code: errorCode,
+        message: errorMsg,
+        codeNames: ["", "MEDIA_ERR_ABORTED", "MEDIA_ERR_NETWORK", "MEDIA_ERR_DECODE", "MEDIA_ERR_SRC_NOT_SUPPORTED"]
+      };
+      const errorName = errorDetails.codeNames[errorCode] || `MEDIA_ERROR_${errorCode}`;
+      console.error("视频加载错误详情:", {
+        errorName,
+        errorCode,
+        errorMsg,
+        src: el.src,
+        readyState: el.readyState,
+        networkState: el.networkState
+      });
+      reject(new Error(`无法读取视频元数据 (${errorName}): ${errorMsg}`));
     };
     el.addEventListener("loadedmetadata", onLoaded, { once: true });
     el.addEventListener("error", onError, { once: true });
@@ -465,22 +505,36 @@ function waitForVideoMetadata(el: HTMLVideoElement) {
 
 async function getBlobDurationMs(blob: Blob, fallbackSeconds: number) {
   try {
+    console.log("尝试从 Blob 读取视频时长:", { blobSize: blob.size, fallbackSeconds });
+    
     const tempVideo = document.createElement("video");
     tempVideo.preload = "metadata";
     tempVideo.muted = true;
     tempVideo.playsInline = true;
+    tempVideo.crossOrigin = "anonymous";
+    
     const url = URL.createObjectURL(blob);
+    console.log("创建临时视频元素，URL:", url);
+    
     tempVideo.src = url;
     tempVideo.load();
+    
     const duration = await waitForVideoMetadata(tempVideo);
+    console.log("成功读取视频时长:", { duration, durationMs: Math.round(duration * 1000) });
+    
     URL.revokeObjectURL(url);
+    
     if (Number.isFinite(duration) && duration > 0) {
       return Math.round(duration * 1000);
+    } else {
+      console.warn("视频时长无效，使用备用值:", fallbackSeconds);
+      return Math.max(1, Math.round(fallbackSeconds * 1000));
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    console.error("从 Blob 读取视频时长失败:", err);
+    console.warn("使用备用时长值:", fallbackSeconds);
+    return Math.max(1, Math.round(fallbackSeconds * 1000));
   }
-  return Math.max(1, Math.round(fallbackSeconds * 1000));
 }
 
 async function prepareSourceVideo(file: File) {
@@ -499,12 +553,16 @@ async function prepareSourceVideoLocal(file: File) {
   setProgressStage(0, 1, "预处理转码中…", "prepare");
 
   const mp4Data = await ffmpegClient.transcodeSource(file) as Uint8Array;
+  console.log("FFmpeg 转码完成:", { dataSize: mp4Data.length, isUint8Array: mp4Data instanceof Uint8Array });
+  
   const mp4Blob = u8ToBlob(mp4Data, "video/mp4");
+  console.log("创建视频 Blob:", { blobSize: mp4Blob.size, blobType: mp4Blob.type });
+  
   progressValue.value = 1;
   progressLabel.value = "预处理完成";
 
   // 保存视频字节数据供缩略图使用
-  console.log("App: 保存视频字节数据", { 
+  console.log("保存视频字节数据用于缩略图", { 
     size: mp4Data.length, 
     enableThumbnails: enableThumbnails.value 
   });
@@ -513,19 +571,29 @@ async function prepareSourceVideoLocal(file: File) {
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
   }
+  
   currentVideoUrl.value = URL.createObjectURL(mp4Blob);
+  console.log("创建视频预览 URL:", { videoUrl: currentVideoUrl.value });
+  
   if (videoRef.value) {
     videoRef.value.src = currentVideoUrl.value;
     videoRef.value.load();
+    console.log("视频元素已加载源，等待元数据…");
+  } else {
+    throw new Error("视频预览元素不存在");
   }
+  
   isPlaying.value = false;
 
+  console.log("等待视频元数据加载…");
   const durationSec = await waitForVideoMetadata(videoRef.value!);
+  console.log("视频元数据已加载:", { duration: durationSec });
+  
   videoDuration.value = Number.isFinite(durationSec) ? durationSec : 0;
   currentTime.value = 0;
 
   if (videoDuration.value <= 0) {
-    throw new Error("无法读取视频时长");
+    throw new Error(`无效的视频时长: ${videoDuration.value}`);
   }
 
   videoStatus.value = `视频总时长约 ${videoDuration.value.toFixed(2)} s。`;
@@ -559,6 +627,8 @@ async function prepareSourceVideoBackend(file: File) {
 
   try {
     const result = await ffmpegClient.transcodeSource(file) as { sessionId: string; previewUrl: string; duration: number };
+    console.log("后端转码结果:", { sessionId: result.sessionId, previewUrl: result.previewUrl, duration: result.duration });
+    
     backendSessionId.value = result.sessionId;
     
     progressValue.value = 1;
@@ -567,19 +637,74 @@ async function prepareSourceVideoBackend(file: File) {
     if (currentVideoUrl.value) {
       URL.revokeObjectURL(currentVideoUrl.value);
     }
+    
     currentVideoUrl.value = result.previewUrl;
+    console.log("设置后端视频 URL:", { videoUrl: currentVideoUrl.value });
+    
+    // 验证后端返回的预览 URL 是否返回有效的 MP4
+    try {
+      console.log("尝试验证后端视频 URL...");
+      // 先尝试 HEAD，如果失败则用 GET with Range
+      let response = await fetch(result.previewUrl, { 
+        method: 'HEAD',
+        credentials: 'same-origin'
+      }).catch(async (err) => {
+        console.log("HEAD 请求失败，尝试 GET with Range:", err.message);
+        // 后备方案：用 GET 请求获取前几字节来验证
+        const getResp = await fetch(result.previewUrl, {
+          method: 'GET',
+          headers: { 'Range': 'bytes=0-1000' },
+          credentials: 'same-origin'
+        });
+        return getResp;
+      });
+
+      console.log("验证后端视频响应:", {
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('Content-Type'),
+        contentLength: response.headers.get('Content-Length'),
+        acceptRanges: response.headers.get('Accept-Ranges'),
+        contentRange: response.headers.get('Content-Range'),
+      });
+      
+      if (!response.ok && response.status !== 206) {
+        console.warn(`警告: 视频验证响应异常 ${response.status} ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get('Content-Type') || '';
+      if (!contentType.includes('video') && !contentType.includes('mp4')) {
+        console.warn("警告: Content-Type 可能不是视频格式:", contentType);
+      }
+    } catch (err) {
+      console.warn("验证后端视频 URL 失败（非阻断）:", err);
+      // 不阻止继续，可能只是验证工具不支持
+    }
+    
     if (videoRef.value) {
+      // 配置视频元素属性以处理跨域和 COEP 问题
+      videoRef.value.crossOrigin = "anonymous";
       videoRef.value.src = currentVideoUrl.value;
       videoRef.value.load();
+      console.log("视频元素已加载后端源，等待元数据…", {
+        crossOrigin: videoRef.value.crossOrigin,
+        src: videoRef.value.src
+      });
+    } else {
+      throw new Error("视频预览元素不存在");
     }
+    
     isPlaying.value = false;
 
+    console.log("等待视频元数据加载（后端URL）…");
     const durationSec = await waitForVideoMetadata(videoRef.value!);
+    console.log("视频元数据已加载:", { duration: durationSec });
+    
     videoDuration.value = Number.isFinite(durationSec) ? durationSec : result.duration;
     currentTime.value = 0;
 
     if (videoDuration.value <= 0) {
-      throw new Error("无法读取视频时长");
+      throw new Error(`无效的视频时长: ${videoDuration.value}`);
     }
 
     videoStatus.value = `视频总时长约 ${videoDuration.value.toFixed(2)} s（后端处理）。`;
@@ -602,6 +727,7 @@ async function prepareSourceVideoBackend(file: File) {
     setStatus(fileStatus, `已选择: ${file.name}，后端转码完成，开始预览。`);
     clearProgress();
   } catch (err) {
+    console.error("后端处理失败:", err);
     backendSessionId.value = null;
     throw err;
   }
@@ -921,9 +1047,34 @@ onMounted(() => {
   console.log("App: 组件已挂载");
   
   // 加载保存的配置
-  loadSettings();
+  const loadResult = loadSettings();
+  
   // 重新初始化客户端以应用加载的配置
   initFFmpegClient();
+  
+  // 如果恢复了后端配置，自动测试连接
+  if (processingMode.value === "backend" && backendUrl.value) {
+    console.log("尝试自动连接到后端服务...");
+    setTimeout(async () => {
+      try {
+        backendConnectionStatus.value = "connecting";
+        const resp = await fetch(`${backendUrl.value}/health`, { method: "HEAD" });
+        if (resp.ok) {
+          console.log("后端服务自动连接成功");
+          backendConnectionStatus.value = "connected";
+          setStatus(fileStatus, "后端服务已连接");
+        } else {
+          console.warn("后端服务返回异常状态:", resp.status);
+          backendConnectionStatus.value = "failed";
+          setStatus(fileStatus, "后端服务连接失败");
+        }
+      } catch (err) {
+        console.warn("后端服务自动连接失败:", err);
+        backendConnectionStatus.value = "failed";
+        setStatus(fileStatus, "后端服务不可用");
+      }
+    }, 500); // 延迟以确保 UI 渲染完成
+  }
   
   if (videoRef.value) {
     videoRef.value.addEventListener("timeupdate", syncCurrentTime);

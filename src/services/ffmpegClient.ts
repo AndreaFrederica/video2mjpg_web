@@ -110,30 +110,55 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
   };
 
   const transcodeSource = async (file: File) => {
-    await ensureLoaded();
-    cleanupFiles();
-    ffmpeg.FS("writeFile", INPUT_FILE, await fetchFile(file));
-    await ffmpeg.run(
-      "-y",
-      "-i",
-      INPUT_FILE,
-      "-movflags",
-      "+faststart",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:v",
-      "libx264",
-      "-profile:v",
-      "baseline",
-      "-level",
-      "3.1",
-      "-r",
-      "30",
-      "-vf",
-      "scale=ceil(iw/2)*2:ceil(ih/2)*2",
-      SOURCE_FILE
-    );
-    return ffmpeg.FS("readFile", SOURCE_FILE);
+    try {
+      console.log("FFmpeg: 开始转码源视频", { fileName: file.name, fileSize: file.size, fileType: file.type });
+      
+      await ensureLoaded();
+      console.log("FFmpeg: 已加载");
+      
+      cleanupFiles();
+      console.log("FFmpeg: 已清理旧文件");
+      
+      const fileData = await fetchFile(file);
+      console.log("FFmpeg: 已读取文件数据", { dataLength: fileData.length });
+      
+      ffmpeg.FS("writeFile", INPUT_FILE, fileData);
+      console.log("FFmpeg: 已写入输入文件到虚拟文件系统");
+      
+      await ffmpeg.run(
+        "-y",
+        "-i",
+        INPUT_FILE,
+        "-movflags",
+        "+faststart",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "baseline",
+        "-level",
+        "3.1",
+        "-r",
+        "30",
+        "-vf",
+        "scale=ceil(iw/2)*2:ceil(ih/2)*2",
+        SOURCE_FILE
+      );
+      console.log("FFmpeg: 转码命令执行完成");
+      
+      const result = ffmpeg.FS("readFile", SOURCE_FILE);
+      console.log("FFmpeg: 已读取转码结果", { resultSize: result.length });
+      
+      return result;
+    } catch (error) {
+      console.error("FFmpeg 转码失败:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
   };
 
   const convertClipAndFrames = async ({
