@@ -14,8 +14,18 @@
         </div>
 
         <q-banner class="note-banner q-mb-lg" rounded>
-          ⚡ 所有转码与合成都在浏览器内完成，无需后端。保证你的数据安全。
+          ⚡ 支持本地处理（FFmpeg.wasm）和后端服务加速两种模式。
         </q-banner>
+
+        <BackendConfig
+          :model-value="processingMode"
+          :backend-url-prop="backendUrl"
+          :auth-token-prop="authToken"
+          @update:model-value="handleModeChange"
+          @update:backend-url="handleBackendUrlChange"
+          @update:auth-token="handleAuthTokenChange"
+          @connection-status="handleConnectionStatus"
+        />
 
         <div class="content-grid">
           <q-card flat bordered class="section-card">
@@ -196,16 +206,78 @@ import VideoTimeline from "./components/VideoTimeline.vue";
 import SpeedControl from "./components/SpeedControl.vue";
 import ActionPanel from "./components/ActionPanel.vue";
 import RangeControls from "./components/RangeControls.vue";
+import BackendConfig from "./components/BackendConfig.vue";
 import { assembleMotionPhoto, createFfmpegClient, type ProgressInfo } from "./services/ffmpegClient";
+import { createUnifiedFFmpegClient, type ProcessingMode, type UnifiedFFmpegClient } from "./services/ffmpegClientFactory";
 
 const selectedFile = ref<File | null>(null);
 const videoRef = ref<HTMLVideoElement | null>(null);
+
+const processingMode = ref<ProcessingMode>("local");
+const backendUrl = ref("");
+const authToken = ref("");
+const backendSessionId = ref<string | null>(null);
+const backendConnectionStatus = ref<"idle" | "connecting" | "connected" | "failed">("idle");
 
 const fileStatus = ref("");
 const videoStatus = ref("");
 const rangeStatus = ref("");
 const speedStatus = ref("");
 const convertStatus = ref("");
+
+let ffmpegClient: UnifiedFFmpegClient;
+
+// localStorage 存储键
+const STORAGE_KEYS = {
+  PROCESSING_MODE: "video2mjpg_processingMode",
+  BACKEND_URL: "video2mjpg_backendUrl",
+  AUTH_TOKEN: "video2mjpg_authToken",
+};
+
+// 保存配置到 localStorage
+function saveSettings() {
+  localStorage.setItem(STORAGE_KEYS.PROCESSING_MODE, processingMode.value);
+  localStorage.setItem(STORAGE_KEYS.BACKEND_URL, backendUrl.value);
+  if (authToken.value) {
+    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken.value);
+  }
+}
+
+// 从 localStorage 读取配置
+function loadSettings() {
+  const savedMode = localStorage.getItem(STORAGE_KEYS.PROCESSING_MODE) as ProcessingMode | null;
+  if (savedMode) {
+    processingMode.value = savedMode;
+  }
+
+  const savedUrl = localStorage.getItem(STORAGE_KEYS.BACKEND_URL);
+  if (savedUrl) {
+    backendUrl.value = savedUrl;
+  }
+
+  const savedToken = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+  if (savedToken) {
+    authToken.value = savedToken;
+  }
+}
+
+function initFFmpegClient() {
+  ffmpegClient = createUnifiedFFmpegClient({
+    mode: processingMode.value,
+    backendUrl: processingMode.value === "backend" ? backendUrl.value : undefined,
+    authToken: authToken.value || undefined,
+    onProgress: (info: ProgressInfo) => {
+      if (!progressActive.value) return;
+      const value = progressBase + info.ratio * progressSpan;
+      progressValue.value = Math.max(0, Math.min(1, value));
+      progressEta.value = info.eta;
+      progressElapsed.value = info.elapsedFormatted;
+    },
+  });
+}
+
+// 初始化默认客户端
+initFFmpegClient();
 
 const startInput = ref(0);
 const endInput = ref(0);
@@ -243,16 +315,6 @@ const progressElapsed = ref("");
 let progressBase = 0;
 let progressSpan = 1;
 
-const ffmpegClient = createFfmpegClient({
-  onProgress: (info: ProgressInfo) => {
-    if (!progressActive.value) return;
-    const value = progressBase + info.ratio * progressSpan;
-    progressValue.value = Math.max(0, Math.min(1, value));
-    progressEta.value = info.eta;
-    progressElapsed.value = info.elapsedFormatted;
-  },
-});
-
 const startTimeDisplay = computed(() => `${rangeStartTime.value.toFixed(2)} s`);
 const endTimeDisplay = computed(() => `${rangeEndTime.value.toFixed(2)} s`);
 const coverTimeDisplay = computed(() => `${coverTimeValue.value.toFixed(2)} s`);
@@ -269,7 +331,7 @@ function setStatus(target: typeof fileStatus, text: string) {
 }
 
 function u8ToBlob(u8: Uint8Array, type: string) {
-  const buffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+  const buffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
   return new Blob([buffer], { type });
 }
 
@@ -311,7 +373,11 @@ async function ensureFfmpeg() {
 }
 
 function cleanupFfmpegFiles() {
-  ffmpegClient.cleanupFiles();
+  if (processingMode.value === "local") {
+    ffmpegClient.cleanupFiles?.();
+  } else if (backendSessionId.value) {
+    ffmpegClient.cleanupFiles?.(backendSessionId.value);
+  }
 }
 
 function resetUI() {
@@ -323,6 +389,7 @@ function resetUI() {
   currentTime.value = 0;
   isPlaying.value = false;
   sourceVideoBytes.value = null;
+  backendSessionId.value = null;
 
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
@@ -417,13 +484,21 @@ async function getBlobDurationMs(blob: Blob, fallbackSeconds: number) {
 }
 
 async function prepareSourceVideo(file: File) {
+  if (processingMode.value === "local") {
+    await prepareSourceVideoLocal(file);
+  } else {
+    await prepareSourceVideoBackend(file);
+  }
+}
+
+async function prepareSourceVideoLocal(file: File) {
   await ensureFfmpeg();
   cleanupFfmpegFiles();
 
   setStatus(fileStatus, `已选择: ${file.name}，正在用 ffmpeg.wasm 转码…`);
   setProgressStage(0, 1, "预处理转码中…", "prepare");
 
-  const mp4Data = await ffmpegClient.transcodeSource(file);
+  const mp4Data = await ffmpegClient.transcodeSource(file) as Uint8Array;
   const mp4Blob = u8ToBlob(mp4Data, "video/mp4");
   progressValue.value = 1;
   progressLabel.value = "预处理完成";
@@ -474,12 +549,78 @@ async function prepareSourceVideo(file: File) {
   clearProgress();
 }
 
+async function prepareSourceVideoBackend(file: File) {
+  if (backendConnectionStatus.value !== "connected") {
+    throw new Error("后端服务未连接，请检查服务地址");
+  }
+
+  setStatus(fileStatus, `已选择: ${file.name}，正在上传到后端服务…`);
+  setProgressStage(0, 1, "上传到后端…", "prepare");
+
+  try {
+    const result = await ffmpegClient.transcodeSource(file) as { sessionId: string; previewUrl: string; duration: number };
+    backendSessionId.value = result.sessionId;
+    
+    progressValue.value = 1;
+    progressLabel.value = "预处理完成";
+
+    if (currentVideoUrl.value) {
+      URL.revokeObjectURL(currentVideoUrl.value);
+    }
+    currentVideoUrl.value = result.previewUrl;
+    if (videoRef.value) {
+      videoRef.value.src = currentVideoUrl.value;
+      videoRef.value.load();
+    }
+    isPlaying.value = false;
+
+    const durationSec = await waitForVideoMetadata(videoRef.value!);
+    videoDuration.value = Number.isFinite(durationSec) ? durationSec : result.duration;
+    currentTime.value = 0;
+
+    if (videoDuration.value <= 0) {
+      throw new Error("无法读取视频时长");
+    }
+
+    videoStatus.value = `视频总时长约 ${videoDuration.value.toFixed(2)} s（后端处理）。`;
+
+    const recommended = 5;
+    if (videoDuration.value > recommended) {
+      rangeStartTime.value = (videoDuration.value - recommended) / 2;
+      rangeEndTime.value = rangeStartTime.value + recommended;
+    } else {
+      rangeStartTime.value = 0;
+      rangeEndTime.value = videoDuration.value;
+    }
+    coverTimeValue.value = (rangeStartTime.value + rangeEndTime.value) / 2;
+
+    previewReady.value = true;
+    convertDisabled.value = false;
+
+    updateSpeedUI();
+
+    setStatus(fileStatus, `已选择: ${file.name}，后端转码完成，开始预览。`);
+    clearProgress();
+  } catch (err) {
+    backendSessionId.value = null;
+    throw err;
+  }
+}
+
 async function convertToMotionPhoto() {
   if (!previewReady.value) {
     setStatus(convertStatus, "请先加载并预览视频。");
     return;
   }
 
+  if (processingMode.value === "local") {
+    await convertToMotionPhotoLocal();
+  } else {
+    await convertToMotionPhotoBackend();
+  }
+}
+
+async function convertToMotionPhotoLocal() {
   await ensureFfmpeg();
 
   let speed = Number(speedInput.value) || 1;
@@ -491,12 +632,19 @@ async function convertToMotionPhoto() {
   setProgressStage(0, 1, "剪裁与转码中…", "convert");
 
   try {
-    const { clipBytes, coverBytes, thumbBytes } = await ffmpegClient.convertClipAndFrames({
+    const result = await ffmpegClient.convertClipAndFrames({
       rangeStart: rangeStartTime.value,
       rangeEnd: rangeEndTime.value,
       coverTime: coverTimeValue.value,
       speed,
     });
+
+    // 确保结果是 ClipResult 类型
+    if (!('clipBytes' in result)) {
+      throw new Error("本地转码返回格式错误");
+    }
+
+    const { clipBytes, coverBytes, thumbBytes } = result;
 
     const clipBlob = u8ToBlob(clipBytes, "video/mp4");
     const fallbackSeconds = Math.max(0.1, (rangeEndTime.value - rangeStartTime.value) / speed);
@@ -504,6 +652,63 @@ async function convertToMotionPhoto() {
 
     const motionBytes = assembleMotionPhoto(coverBytes, clipBytes, thumbBytes, durationMs);
     const motionBlob = u8ToBlob(motionBytes, "image/jpeg");
+    const downloadUrl = URL.createObjectURL(motionBlob);
+
+    const a = document.createElement("a");
+    const baseName = (currentFileName.value || "motion_photo").replace(/\.[^/.]+$/, "");
+    a.href = downloadUrl;
+    a.download = `${baseName}_motion.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(downloadUrl);
+
+    setStatus(convertStatus, "转换成功，文件已下载。");
+    Notify.create({ message: "转换成功，文件已下载。", color: "positive" });
+    progressValue.value = 1;
+    progressLabel.value = "转换完成";
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : String(err);
+    setStatus(convertStatus, `转换失败：${message}`);
+    Notify.create({ message: `转换失败：${message}`, color: "negative" });
+    progressLabel.value = "转换失败";
+  } finally {
+    isConverting.value = false;
+    convertDisabled.value = !previewReady.value;
+    setTimeout(() => clearProgress(), 500);
+  }
+}
+
+async function convertToMotionPhotoBackend() {
+  if (!backendSessionId.value) {
+    setStatus(convertStatus, "后端会话已过期，请重新上传文件。");
+    return;
+  }
+
+  let speed = Number(speedInput.value) || 1;
+  if (!Number.isFinite(speed) || speed <= 0) speed = 1;
+
+  convertDisabled.value = true;
+  isConverting.value = true;
+  setStatus(convertStatus, "正在通过后端服务生成 Motion Photo…");
+  setProgressStage(0, 1, "后端处理中…", "convert");
+
+  try {
+    const result = await ffmpegClient.convertClipAndFrames({
+      sessionId: backendSessionId.value,
+      rangeStart: rangeStartTime.value,
+      rangeEnd: rangeEndTime.value,
+      coverTime: coverTimeValue.value,
+      speed,
+    });
+
+    // 后端返回的是 Uint8Array
+    if (!('byteLength' in result)) {
+      throw new Error("后端转码返回格式错误");
+    }
+
+    const motionBlob = u8ToBlob(result, "image/jpeg");
     const downloadUrl = URL.createObjectURL(motionBlob);
 
     const a = document.createElement("a");
@@ -665,8 +870,61 @@ watch([enableThumbnails, previewReady], ([enabled, ready]) => {
   });
 });
 
+function handleModeChange(mode: ProcessingMode) {
+  processingMode.value = mode;
+  backendSessionId.value = null;
+  saveSettings();
+  
+  // 重新初始化客户端
+  initFFmpegClient();
+  
+  if (mode === "local") {
+    backendConnectionStatus.value = "idle";
+    setStatus(fileStatus, "已切换到本地处理模式");
+  } else {
+    setStatus(fileStatus, "已切换到后端处理模式");
+  }
+}
+
+function handleBackendUrlChange(url: string) {
+  backendUrl.value = url;
+  saveSettings();
+  
+  // 如果已经切换到后端模式，重新初始化客户端
+  if (processingMode.value === "backend") {
+    initFFmpegClient();
+  }
+}
+
+function handleAuthTokenChange(token: string) {
+  authToken.value = token;
+  saveSettings();
+  
+  // 如果已经切换到后端模式，重新初始化客户端
+  if (processingMode.value === "backend") {
+    initFFmpegClient();
+  }
+}
+
+function handleConnectionStatus(status: "idle" | "connecting" | "connected" | "failed") {
+  backendConnectionStatus.value = status;
+  
+  if (status === "failed") {
+    setStatus(fileStatus, "后端服务连接失败，请检查 URL");
+    convertDisabled.value = true;
+  } else if (status === "connected") {
+    setStatus(fileStatus, "后端服务连接成功");
+  }
+}
+
 onMounted(() => {
   console.log("App: 组件已挂载");
+  
+  // 加载保存的配置
+  loadSettings();
+  // 重新初始化客户端以应用加载的配置
+  initFFmpegClient();
+  
   if (videoRef.value) {
     videoRef.value.addEventListener("timeupdate", syncCurrentTime);
     videoRef.value.addEventListener("play", handleVideoPlay);
