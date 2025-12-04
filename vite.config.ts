@@ -61,7 +61,4 @@ export default defineConfig({
       "Cross-Origin-Resource-Policy": "cross-origin",
     },
   },
-  optimizeDeps: {
-    exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
-  },
 });
