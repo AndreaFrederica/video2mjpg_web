@@ -1,0 +1,294 @@
+body {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f7f8fa;
+  color: #111827;
+}
+
+.app-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.title {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.subtitle {
+  color: #4b5563;
+  margin-top: 0.25rem;
+}
+
+.note-banner {
+  background: linear-gradient(135deg, #eff6ff 0%, #e0f2fe 100%);
+  color: #0f172a;
+  border: 1px solid #bfdbfe;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.section-card {
+  background: white;
+}
+
+.action-card {
+  display: flex;
+  align-items: center;
+}
+
+.section-title {
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.status-text {
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+  color: #4b5563;
+  min-height: 1.2rem;
+}
+
+.video-shell {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.preview-video {
+  width: 100%;
+  display: block;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.85rem;
+}
+
+.timeline-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.control-group label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.status-chip .q-badge {
+  font-size: 0.9rem;
+}
+
+/* 时间轴样式，移植自旧版 */
+.timeline-container {
+  margin-top: 1rem;
+}
+
+.timeline-tracker {
+  position: relative;
+  height: 50px;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: visible;
+}
+
+.timeline-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 40px;
+  background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);
+  border-radius: 7px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.timeline-range {
+  position: absolute;
+  top: 0;
+  height: 40px;
+  background: linear-gradient(90deg, #60a5fa 0%, #3b82f6 100%);
+  border-radius: 7px;
+  pointer-events: auto;
+  cursor: move;
+  z-index: 2;
+}
+
+.timeline-markers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 40px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 40px;
+  cursor: ew-resize;
+  pointer-events: auto;
+  z-index: 4;
+  transition: width 0.1s ease;
+}
+
+.marker:hover {
+  width: 3px;
+}
+
+.marker::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid currentColor;
+}
+
+.start-marker {
+  background: #10b981;
+  color: #10b981;
+}
+
+.end-marker {
+  background: #ef4444;
+  color: #ef4444;
+}
+
+.cover-marker {
+  background: #fbbf24;
+  color: #fbbf24;
+  width: 3px;
+}
+
+.cover-marker:hover {
+  width: 4px;
+}
+
+.marker-label {
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: currentColor;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.marker:hover .marker-label {
+  opacity: 1;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 40px;
+  background: #dc2626;
+  cursor: ew-resize;
+  pointer-events: auto;
+  z-index: 7;
+  transition: width 0.1s ease;
+}
+
+.playhead:hover {
+  width: 3px;
+}
+
+.playhead::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 8px solid #dc2626;
+}
+
+.playhead::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid #dc2626;
+}
+
+.timeline-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 40px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+@media (max-width: 1024px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

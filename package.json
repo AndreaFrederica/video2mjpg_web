@@ -1,0 +1,26 @@
+{
+  "name": "video2mjpg-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.10.1",
+    "@quasar/extras": "^1.16.8",
+    "quasar": "^2.16.0",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@quasar/vite-plugin": "^1.7.0",
+    "@vitejs/plugin-vue": "^5.0.5",
+    "@types/node": "^22.10.1",
+    "sass": "^1.75.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.2.10"
+  },
+  "packageManager": "pnpm@9.13.2"
+}
