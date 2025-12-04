@@ -46,18 +46,25 @@
                 <video ref="videoRef" class="preview-video" controls playsinline></video>
               </div>
               <div class="status-text">{{ videoStatus }}</div>
-              <q-linear-progress
-                v-if="isPrepareProgress"
-                :value="progressValue"
-                color="primary"
-                track-color="grey-3"
-                size="md"
-                rounded
-                stripe
-                :indeterminate="progressValue <= 0"
-                :label="progressText"
-                class="q-mt-sm"
-              />
+              <div v-if="isPrepareProgress" class="progress-container q-mt-sm">
+                <q-linear-progress
+                  :value="progressValue"
+                  color="primary"
+                  track-color="grey-3"
+                  size="lg"
+                  rounded
+                  stripe
+                  :indeterminate="progressValue <= 0"
+                />
+                <div class="progress-info q-mt-xs">
+                  <span class="progress-percentage">{{ Math.round(progressValue * 100) }}%</span>
+                  <span class="progress-time" v-if="progressElapsed">
+                    已用 {{ progressElapsed }}
+                    <template v-if="progressEta && progressValue > 0.01"> · 剩余 {{ progressEta }}</template>
+                  </span>
+                  <span class="progress-label">{{ progressLabel }}</span>
+                </div>
+              </div>
             </q-card-section>
           </q-card>
         </div>
@@ -189,7 +196,7 @@ import VideoTimeline from "./components/VideoTimeline.vue";
 import SpeedControl from "./components/SpeedControl.vue";
 import ActionPanel from "./components/ActionPanel.vue";
 import RangeControls from "./components/RangeControls.vue";
-import { assembleMotionPhoto, createFfmpegClient } from "./services/ffmpegClient";
+import { assembleMotionPhoto, createFfmpegClient, type ProgressInfo } from "./services/ffmpegClient";
 
 const selectedFile = ref<File | null>(null);
 const videoRef = ref<HTMLVideoElement | null>(null);
@@ -231,14 +238,18 @@ const progressActive = ref(false);
 const progressValue = ref(0);
 const progressLabel = ref("");
 const progressContext = ref<"none" | "prepare" | "convert">("none");
+const progressEta = ref("");
+const progressElapsed = ref("");
 let progressBase = 0;
 let progressSpan = 1;
 
 const ffmpegClient = createFfmpegClient({
-  onProgress: (ratio) => {
+  onProgress: (info: ProgressInfo) => {
     if (!progressActive.value) return;
-    const value = progressBase + ratio * progressSpan;
+    const value = progressBase + info.ratio * progressSpan;
     progressValue.value = Math.max(0, Math.min(1, value));
+    progressEta.value = info.eta;
+    progressElapsed.value = info.elapsedFormatted;
   },
 });
 

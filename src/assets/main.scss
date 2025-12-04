@@ -370,3 +370,34 @@ body {
     align-items: flex-start;
   }
 }
+
+/* 进度条信息样式 */
+.progress-container {
+  .progress-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    color: #4b5563;
+    gap: 1rem;
+  }
+
+  .progress-percentage {
+    font-weight: 700;
+    font-size: 1rem;
+    color: #1f2937;
+    min-width: 3rem;
+  }
+
+  .progress-time {
+    color: #6b7280;
+    flex: 1;
+    text-align: center;
+  }
+
+  .progress-label {
+    color: #9ca3af;
+    text-align: right;
+    min-width: 4rem;
+  }
+}
