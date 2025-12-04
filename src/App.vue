@@ -92,6 +92,7 @@
             </div>
 
             <VideoTimeline
+              ref="timelineRef"
               :duration="videoDuration"
               :start="rangeStartTime"
               :end="rangeEndTime"
@@ -114,10 +115,10 @@
               :value="thumbnailProgress / 100"
               color="secondary"
               track-color="grey-3"
-              size="md"
+              size="xl"
               rounded
               stripe
-              class="q-mt-sm"
+              class="q-mt-sm thumbnail-progress"
             >
               <div class="absolute-full flex flex-center">
                 <q-badge color="white" text-color="secondary" :label="thumbnailStatus" />
@@ -167,6 +168,20 @@
         <footer class="app-footer q-mt-xl">
           <div class="footer-content">
             <div class="footer-section">
+              <div class="footer-title">本项目仓库</div>
+              <div class="footer-links">
+                <a href="https://github.com/AndreaFrederica/video2ajpg" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="code" size="sm" />
+                  <span>后端项目</span>
+                </a>
+                <a href="https://github.com/AndreaFrederica/video2mjpg_web" target="_blank" rel="noopener noreferrer" class="footer-link">
+                  <q-icon name="web" size="sm" />
+                  <span>前端项目</span>
+                </a>
+              </div>
+            </div>
+            <div class="footer-divider"></div>
+            <div class="footer-section">
               <div class="footer-title">快速访问</div>
               <div class="footer-links">
                 <a href="https://blog.sirrus.cc" target="_blank" rel="noopener noreferrer" class="footer-link">
@@ -213,6 +228,7 @@ import { createUnifiedFFmpegClient, type ProcessingMode, type UnifiedFFmpegClien
 
 const selectedFile = ref<File | null>(null);
 const videoRef = ref<HTMLVideoElement | null>(null);
+const timelineRef = ref<InstanceType<typeof VideoTimeline> | null>(null);
 
 const processingMode = ref<ProcessingMode>("local");
 const backendUrl = ref("");
@@ -401,6 +417,11 @@ function resetUI() {
   sourceVideoBytes.value = null;
   backendSessionId.value = null;
 
+  // 清空缩略图
+  if (timelineRef.value) {
+    timelineRef.value.clearThumbnails();
+  }
+
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
     currentVideoUrl.value = null;
@@ -519,16 +540,22 @@ async function getBlobDurationMs(blob: Blob, fallbackSeconds: number) {
     tempVideo.src = url;
     tempVideo.load();
     
-    const duration = await waitForVideoMetadata(tempVideo);
-    console.log("成功读取视频时长:", { duration, durationMs: Math.round(duration * 1000) });
-    
-    URL.revokeObjectURL(url);
-    
-    if (Number.isFinite(duration) && duration > 0) {
-      return Math.round(duration * 1000);
-    } else {
-      console.warn("视频时长无效，使用备用值:", fallbackSeconds);
-      return Math.max(1, Math.round(fallbackSeconds * 1000));
+    try {
+      const duration = await waitForVideoMetadata(tempVideo);
+      console.log("成功读取视频时长:", { duration, durationMs: Math.round(duration * 1000) });
+      
+      if (Number.isFinite(duration) && duration > 0) {
+        return Math.round(duration * 1000);
+      } else {
+        console.warn("视频时长无效，使用备用值:", fallbackSeconds);
+        return Math.max(1, Math.round(fallbackSeconds * 1000));
+      }
+    } finally {
+      // 清理 video 元素并释放 URL
+      tempVideo.pause();
+      tempVideo.src = "";
+      tempVideo.removeAttribute("src");
+      URL.revokeObjectURL(url);
     }
   } catch (err) {
     console.error("从 Blob 读取视频时长失败:", err);

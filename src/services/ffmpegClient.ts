@@ -58,6 +58,7 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
   let ready = false;
   let loadingPromise: Promise<void> | null = null;
   let startTime = 0;
+  let sourceIsFromGif = false; // 标记源文件是否来自 GIF
 
   const ensureLoaded = async () => {
     if (ready) return;
@@ -109,9 +110,27 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
     });
   };
 
+  const isVideoFormat = (file: File): boolean => {
+    // 检查 MIME 类型
+    if (file.type.startsWith("video/")) {
+      return true;
+    }
+    
+    // 检查文件扩展名
+    const ext = file.name.toLowerCase().split(".").pop() || "";
+    const videoExtensions = ["mp4", "webm", "ogg", "mov", "avi", "mkv", "flv", "m4v", "mpg", "mpeg"];
+    return videoExtensions.includes(ext);
+  };
+
   const transcodeSource = async (file: File) => {
     try {
-      console.log("FFmpeg: 开始转码源视频", { fileName: file.name, fileSize: file.size, fileType: file.type });
+      const isVideo = isVideoFormat(file);
+      console.log("FFmpeg: 开始处理源文件", { 
+        fileName: file.name, 
+        fileSize: file.size, 
+        fileType: file.type,
+        isVideo
+      });
       
       await ensureLoaded();
       console.log("FFmpeg: 已加载");
@@ -122,6 +141,18 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       const fileData = await fetchFile(file);
       console.log("FFmpeg: 已读取文件数据", { dataLength: fileData.length });
       
+      // 如果是视频格式，直接写入虚拟文件系统作为 SOURCE_FILE，无需转码
+      if (isVideo) {
+        console.log("FFmpeg: 检测到视频格式，直接使用原文件，跳过转码");
+        sourceIsFromGif = false; // 来自真实视频文件
+        ffmpeg.FS("writeFile", SOURCE_FILE, fileData);
+        console.log("FFmpeg: 已将视频文件写入虚拟文件系统作为 SOURCE_FILE");
+        return fileData;
+      }
+      
+      // GIF 转码 - 直接用老版本的参数
+      console.log("FFmpeg: 检测到非视频格式（GIF），开始转码为 MP4…");
+      sourceIsFromGif = true;
       ffmpeg.FS("writeFile", INPUT_FILE, fileData);
       console.log("FFmpeg: 已写入输入文件到虚拟文件系统");
       
@@ -145,14 +176,14 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
         "scale=ceil(iw/2)*2:ceil(ih/2)*2",
         SOURCE_FILE
       );
-      console.log("FFmpeg: 转码命令执行完成");
+      console.log("FFmpeg: GIF 转码完成");
       
       const result = ffmpeg.FS("readFile", SOURCE_FILE);
       console.log("FFmpeg: 已读取转码结果", { resultSize: result.length });
       
       return result;
     } catch (error) {
-      console.error("FFmpeg 转码失败:", {
+      console.error("FFmpeg 处理源文件失败:", {
         error,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
@@ -174,71 +205,153 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
   }): Promise<ClipResult> => {
     await ensureLoaded();
 
-    const filterGraph =
-      Math.abs(speed - 1.0) > 1e-3
-        ? `setpts=PTS/${speed.toFixed(4)},scale=ceil(iw/2)*2:ceil(ih/2)*2`
-        : "scale=ceil(iw/2)*2:ceil(ih/2)*2";
+    // 视频和音频使用完全相同的倍速
+    const speedStr = speed.toFixed(4);
+    const filterGraph = Math.abs(speed - 1.0) > 1e-3 ? `setpts=PTS/${speedStr}` : "";
 
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      rangeStart.toFixed(3),
-      "-to",
-      rangeEnd.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-movflags",
-      "+faststart",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:v",
-      "libx264",
-      "-profile:v",
-      "baseline",
-      "-level",
-      "3.1",
-      "-r",
-      "30",
-      "-filter:v",
-      filterGraph,
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
-      CLIP_FILE
-    );
+    console.log("FFmpeg: 开始生成视频片段和封面", {
+      rangeStart,
+      rangeEnd,
+      coverTime,
+      speed,
+      speedStr,
+      hasFilter: !!filterGraph,
+    });
 
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      coverTime.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "2",
-      COVER_FILE
-    );
+    try {
+      console.log("FFmpeg: 执行裁剪命令…");
+      // 直接在裁剪时进行完整编码（参数顺序：-ss -to 在 -i 之前）
+      const speedStr = speed.toFixed(4);
+      const filterGraph =
+        Math.abs(speed - 1.0) > 1e-3
+          ? `setpts=PTS/${speedStr},scale=ceil(iw/2)*2:ceil(ih/2)*2`
+          : "scale=ceil(iw/2)*2:ceil(ih/2)*2";
 
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      coverTime.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "2",
-      THUMB_FILE
-    );
+      const ffmpegArgs = [
+        "-y",
+        "-ss",
+        rangeStart.toFixed(3),
+        "-to",
+        rangeEnd.toFixed(3),
+        "-i",
+        SOURCE_FILE,
+        "-movflags",
+        "+faststart",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "baseline",
+        "-level",
+        "3.1",
+        "-r",
+        "30",
+        "-filter:v",
+        filterGraph,
+      ];
 
-    return {
-      clipBytes: ffmpeg.FS("readFile", CLIP_FILE),
-      coverBytes: ffmpeg.FS("readFile", COVER_FILE),
-      thumbBytes: ffmpeg.FS("readFile", THUMB_FILE),
-    };
+      // 根据源文件类型决定是否编码音频
+      if (!sourceIsFromGif) {
+        // 非 GIF 源才处理音频倍速
+        if (Math.abs(speed - 1.0) > 1e-3) {
+          let audioTempoFilter = "";
+          let currentSpeed = speed;
+          const tempoFilters = [];
+          
+          // 对于超出范围的倍速，链接多个 atempo 过滤器
+          while (currentSpeed > 2.0) {
+            tempoFilters.push("atempo=2.0");
+            currentSpeed /= 2.0;
+          }
+          while (currentSpeed < 0.5) {
+            tempoFilters.push("atempo=0.5");
+            currentSpeed /= 0.5;
+          }
+          tempoFilters.push(`atempo=${currentSpeed.toFixed(4)}`);
+          audioTempoFilter = tempoFilters.join(",");
+          
+          console.log("FFmpeg: 音频倍速过滤器:", audioTempoFilter);
+          ffmpegArgs.push("-filter:a", audioTempoFilter);
+        }
+        ffmpegArgs.push("-c:a", "aac", "-b:a", "128k");
+      } else {
+        // GIF 来源没有音频，直接禁用
+        console.log("FFmpeg: GIF 来源，禁用音频处理");
+        ffmpegArgs.push("-an");
+      }
+
+      ffmpegArgs.push(CLIP_FILE);
+
+      try {
+        await ffmpeg.run(...ffmpegArgs);
+        console.log("FFmpeg: 裁剪命令执行完成");
+      } catch (error) {
+        console.error("FFmpeg: 裁剪命令执行失败:", error);
+        throw error;
+      }
+      
+      const clipBytes1 = ffmpeg.FS("readFile", CLIP_FILE);
+      console.log("FFmpeg: 裁剪完成，文件大小:", clipBytes1.length);
+
+      console.log("FFmpeg: 执行提取封面命令…");
+      await ffmpeg.run(
+        "-y",
+        "-ss",
+        coverTime.toFixed(3),
+        "-i",
+        SOURCE_FILE,
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        COVER_FILE
+      );
+      console.log("FFmpeg: 提取封面完成");
+
+      console.log("FFmpeg: 执行提取缩略图命令…");
+      await ffmpeg.run(
+        "-y",
+        "-ss",
+        coverTime.toFixed(3),
+        "-i",
+        SOURCE_FILE,
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        THUMB_FILE
+      );
+      console.log("FFmpeg: 提取缩略图完成");
+
+      const clipBytes = ffmpeg.FS("readFile", CLIP_FILE);
+      const coverBytes = ffmpeg.FS("readFile", COVER_FILE);
+      const thumbBytes = ffmpeg.FS("readFile", THUMB_FILE);
+
+      console.log("FFmpeg: 读取文件完成", {
+        clipSize: clipBytes.length,
+        coverSize: coverBytes.length,
+        thumbSize: thumbBytes.length,
+      });
+
+      if (clipBytes.length === 0) {
+        console.error("FFmpeg: 警告 - 生成的视频片段为空！");
+        throw new Error("生成的视频片段为空，可能是编码失败");
+      }
+
+      return {
+        clipBytes,
+        coverBytes,
+        thumbBytes,
+      };
+    } catch (error) {
+      console.error("FFmpeg: 生成片段和封面失败:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
   };
 
   const generateThumbnail = async (timestamp: number): Promise<Uint8Array> => {
