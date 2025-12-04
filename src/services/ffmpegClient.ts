@@ -22,6 +22,7 @@ export type FfmpegClient = {
   cleanupFiles: (names?: string[]) => void;
   transcodeSource: (file: File) => Promise<Uint8Array>;
   convertClipAndFrames: (params: { rangeStart: number; rangeEnd: number; coverTime: number; speed: number }) => Promise<ClipResult>;
+  generateThumbnail: (timestamp: number) => Promise<Uint8Array>;
 };
 
 const DEFAULT_CORE_PATH = "https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js";
@@ -170,11 +171,48 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
     };
   };
 
+  const generateThumbnail = async (timestamp: number): Promise<Uint8Array> => {
+    await ensureLoaded();
+    const thumbName = `thumb_${timestamp.toFixed(2)}.jpg`;
+    
+    try {
+      // 从已经存在的 SOURCE_FILE 提取帧
+      await ffmpeg.run(
+        "-ss",
+        timestamp.toString(),
+        "-i",
+        SOURCE_FILE,
+        "-vframes",
+        "1",
+        "-vf",
+        "scale=160:-1",
+        "-q:v",
+        "5",
+        thumbName
+      );
+      
+      const data = ffmpeg.FS("readFile", thumbName);
+      
+      // 清理生成的文件
+      try {
+        ffmpeg.FS("unlink", thumbName);
+      } catch {
+        // ignore
+      }
+      
+      return data;
+    } catch (error) {
+      console.error(`生成缩略图失败 (${timestamp}s):`, error);
+      throw error;
+    }
+  };
+
   return {
     ensureLoaded,
     cleanupFiles,
     transcodeSource,
     convertClipAndFrames,
+    generateThumbnail,
   };
 }
 

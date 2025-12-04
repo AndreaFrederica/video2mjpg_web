@@ -25,6 +25,17 @@
     </div>
 
     <div class="timeline-tracker" ref="trackerRef">
+      <div class="timeline-thumbnails" v-if="thumbnailUrls.size > 0">
+        <div
+          v-for="[timestamp, url] of thumbnailUrls.entries()"
+          :key="timestamp"
+          class="thumbnail"
+          :style="{ 
+            backgroundImage: `url(${url})`, 
+            left: `calc(8px + ${(timestamp / safeDuration) * 100}%)`
+          }"
+        ></div>
+      </div>
       <div class="timeline-progress" :style="{ width: progressPercent }"></div>
       <div class="timeline-range" :style="{ left: rangeLeft, width: rangeWidth }" @mousedown="handleRangeMouseDown"></div>
       <div class="timeline-markers">
@@ -72,7 +83,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import type { FfmpegClient } from "../services/ffmpegClient";
 
 const props = defineProps<{
   duration: number;
@@ -82,6 +94,7 @@ const props = defineProps<{
   currentTime: number;
   disabled?: boolean;
   playing?: boolean;
+  ffmpegClient?: FfmpegClient;
 }>();
 
 const emit = defineEmits<{
@@ -90,9 +103,12 @@ const emit = defineEmits<{
   (e: "update:cover", value: number): void;
   (e: "seek", value: number): void;
   (e: "toggle-play"): void;
+  (e: "thumbnail-progress", progress: { current: number; total: number; percentage: number }): void;
 }>();
 
 const trackerRef = ref<HTMLDivElement | null>(null);
+const thumbnailUrls = ref<Map<number, string>>(new Map());
+const isGeneratingThumbnails = ref(false);
 
 const safeDuration = computed(() => Math.max(0, props.duration || 0));
 const durationLabel = computed(() => `${safeDuration.value.toFixed(2)} s`);
@@ -255,6 +271,8 @@ function handlePlayheadDown(e: MouseEvent) {
 onBeforeUnmount(() => {
   document.body.style.cursor = "default";
   document.body.style.userSelect = "auto";
+  // Clean up thumbnail URLs
+  thumbnailUrls.value.forEach((url) => URL.revokeObjectURL(url));
 });
 
 function handleTogglePlay() {
@@ -283,6 +301,86 @@ function setCurrentAsEnd() {
     emit("update:end", newEnd);
   }
 }
+
+// Generate thumbnails for the timeline
+const generateThumbnails = async () => {
+  if (!props.ffmpegClient || safeDuration.value <= 0) return;
+  
+  // 如果已经在生成，不重复生成
+  if (isGeneratingThumbnails.value) return;
+  
+  isGeneratingThumbnails.value = true;
+  console.log("开始生成缩略图...");
+  
+  try {
+    await props.ffmpegClient.ensureLoaded();
+    console.log("FFmpeg 已加载");
+    
+    // 生成覆盖整个视频时长的缩略图，每2秒一张
+    const step = 2;
+    const urls = new Map<number, string>();
+    const totalFrames = Math.ceil(safeDuration.value / step);
+    
+    console.log(`将生成 ${totalFrames + 1} 张缩略图`);
+    
+    for (let i = 0; i <= totalFrames; i++) {
+      const time = Math.min(i * step, safeDuration.value);
+      const key = Math.floor(time * 10) / 10; // 精确到 0.1 秒
+      
+      // 检查是否已有缓存
+      if (thumbnailUrls.value.has(key)) {
+        urls.set(key, thumbnailUrls.value.get(key)!);
+        const percentage = Math.round(((i + 1) / (totalFrames + 1)) * 100);
+        emit("thumbnail-progress", { current: i + 1, total: totalFrames + 1, percentage });
+        continue;
+      }
+      
+      try {
+        console.log(`生成第 ${i + 1}/${totalFrames + 1} 张，时间点: ${time.toFixed(2)}s`);
+        const data = await props.ffmpegClient.generateThumbnail(time);
+        const blob = new Blob([data], { type: "image/jpeg" });
+        const url = URL.createObjectURL(blob);
+        urls.set(key, url);
+        // 实时更新显示
+        thumbnailUrls.value = new Map(urls);
+        
+        // 发送进度更新
+        const percentage = Math.round(((i + 1) / (totalFrames + 1)) * 100);
+        emit("thumbnail-progress", { current: i + 1, total: totalFrames + 1, percentage });
+      } catch (error) {
+        console.error(`生成缩略图失败 (${time}s):`, error);
+      }
+    }
+    
+    console.log(`缩略图生成完成，共 ${urls.size} 张`);
+  } catch (error) {
+    console.error("缩略图生成失败:", error);
+  } finally {
+    isGeneratingThumbnails.value = false;
+    // 完成后发送 100% 进度
+    emit("thumbnail-progress", { current: 0, total: 0, percentage: 100 });
+  }
+};
+
+// Watch for ffmpeg client changes
+watch(() => props.ffmpegClient, (newClient, oldClient) => {
+  console.log("VideoTimeline: ffmpegClient 变化检测", {
+    hasNewClient: !!newClient,
+    hasOldClient: !!oldClient,
+    duration: safeDuration.value
+  });
+  
+  if (newClient) {
+    console.log("VideoTimeline: 检测到 FFmpeg 客户端，准备生成缩略图");
+    // 清空旧的缩略图
+    thumbnailUrls.value.forEach((url) => URL.revokeObjectURL(url));
+    thumbnailUrls.value.clear();
+    // 生成新的缩略图
+    generateThumbnails();
+  } else {
+    console.log("VideoTimeline: 没有 FFmpeg 客户端");
+  }
+}, { immediate: true });
 </script>
 
 <style scoped>
@@ -396,12 +494,37 @@ function setCurrentAsEnd() {
   overflow: visible;
 }
 
+.timeline-thumbnails {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  right: 8px;
+  height: 42px;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.thumbnail {
+  position: absolute;
+  top: 0;
+  width: 80px;
+  height: 42px;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.7;
+  border-right: 1px solid rgba(255, 255, 255, 0.3);
+  transform: translateX(-40px);
+}
+
 .timeline-progress {
   position: absolute;
   top: 0;
   left: 8px;
   height: 42px;
-  background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);
+  background: rgba(161, 182, 214, 0.32);
   border-radius: 9px;
   pointer-events: none;
   z-index: 1;
@@ -414,7 +537,7 @@ function setCurrentAsEnd() {
   top: 6px;
   left: 8px;
   height: 42px;
-  background: linear-gradient(90deg, #8ab4ff 0%, #3b82f6 100%);
+  background: rgba(59, 130, 246, 0.3);
   border-radius: 9px;
   pointer-events: auto;
   cursor: move;

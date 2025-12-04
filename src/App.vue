@@ -64,7 +64,15 @@
 
         <q-card flat bordered class="section-card q-mt-lg">
           <q-card-section>
-            <div class="section-title q-mb-md">视频裁剪时间轴</div>
+            <div class="section-title q-mb-md">
+              视频裁剪时间轴
+              <q-toggle
+                v-model="enableThumbnails"
+                label="显示缩略图"
+                size="sm"
+                class="q-ml-md"
+              />
+            </div>
 
             <VideoTimeline
               :duration="videoDuration"
@@ -74,12 +82,29 @@
               :current-time="currentTime"
               :playing="isPlaying"
               :disabled="!previewReady"
+              :ffmpeg-client="enableThumbnails && previewReady ? ffmpegClient : undefined"
               @update:start="handleStartInput"
               @update:end="handleEndInput"
               @update:cover="handleCoverInput"
               @seek="handleSeek"
               @toggle-play="handleTogglePlay"
+              @thumbnail-progress="handleThumbnailProgress"
             />
+
+            <q-linear-progress
+              v-if="isGeneratingThumbnails"
+              :value="thumbnailProgress / 100"
+              color="secondary"
+              track-color="grey-3"
+              size="md"
+              rounded
+              stripe
+              class="q-mt-sm"
+            >
+              <div class="absolute-full flex flex-center">
+                <q-badge color="white" text-color="secondary" :label="thumbnailStatus" />
+              </div>
+            </q-linear-progress>
 
             <RangeControls
               :start="startInput"
@@ -126,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Notify } from "quasar";
 import VideoTimeline from "./components/VideoTimeline.vue";
 import SpeedControl from "./components/SpeedControl.vue";
@@ -149,6 +174,10 @@ const coverInput = ref(0);
 const targetLength = ref(5);
 const autoSpeed = ref(true);
 const speedInput = ref(1);
+const enableThumbnails = ref(true);
+const thumbnailProgress = ref(0);
+const thumbnailStatus = ref("");
+const isGeneratingThumbnails = ref(false);
 
 const ffmpegReady = ref(false);
 const ffmpegLoading = ref(false);
@@ -163,6 +192,7 @@ const currentTime = ref(0);
 const isPlaying = ref(false);
 const currentFileName = ref<string | null>(null);
 const currentVideoUrl = ref<string | null>(null);
+const sourceVideoBytes = ref<Uint8Array | null>(null);
 
 const convertDisabled = ref(true);
 const progressActive = ref(false);
@@ -249,6 +279,7 @@ function resetUI() {
   coverTimeValue.value = 0;
   currentTime.value = 0;
   isPlaying.value = false;
+  sourceVideoBytes.value = null;
 
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
@@ -353,6 +384,13 @@ async function prepareSourceVideo(file: File) {
   const mp4Blob = u8ToBlob(mp4Data, "video/mp4");
   progressValue.value = 1;
   progressLabel.value = "预处理完成";
+
+  // 保存视频字节数据供缩略图使用
+  console.log("App: 保存视频字节数据", { 
+    size: mp4Data.length, 
+    enableThumbnails: enableThumbnails.value 
+  });
+  sourceVideoBytes.value = mp4Data;
 
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
@@ -557,7 +595,35 @@ async function handleTogglePlay() {
   }
 }
 
+function handleThumbnailProgress(progress: { current: number; total: number; percentage: number }) {
+  console.log("App: 收到缩略图进度", progress);
+  thumbnailProgress.value = progress.percentage;
+  
+  if (progress.percentage === 100) {
+    isGeneratingThumbnails.value = false;
+    thumbnailStatus.value = "缩略图生成完成";
+    console.log("App: 缩略图生成完成");
+    setTimeout(() => {
+      thumbnailStatus.value = "";
+    }, 2000);
+  } else {
+    isGeneratingThumbnails.value = true;
+    thumbnailStatus.value = `生成缩略图中... ${progress.current}/${progress.total} (${progress.percentage}%)`;
+    console.log("App: 更新进度条状态", thumbnailStatus.value);
+  }
+}
+
+// 调试：监听缩略图相关状态
+watch([enableThumbnails, previewReady], ([enabled, ready]) => {
+  console.log("App: 缩略图状态变化", {
+    enableThumbnails: enabled,
+    previewReady: ready,
+    willPassClient: enabled && ready
+  });
+});
+
 onMounted(() => {
+  console.log("App: 组件已挂载");
   if (videoRef.value) {
     videoRef.value.addEventListener("timeupdate", syncCurrentTime);
     videoRef.value.addEventListener("play", handleVideoPlay);
