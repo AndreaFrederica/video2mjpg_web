@@ -69,102 +69,44 @@
               @toggle-play="handleTogglePlay"
             />
 
-            <div class="timeline-controls q-mt-md">
-              <div class="control-group">
-                <label>段落开始: <span class="pill">{{ startTimeDisplay }}</span></label>
-                <q-input
-                  v-model.number="startInput"
-                  type="number"
-                  dense
-                  outlined
-                  min="0"
-                  step="0.01"
-                  @update:model-value="handleStartInput"
-                />
-              </div>
-              <div class="control-group">
-                <label>段落结束: <span class="pill">{{ endTimeDisplay }}</span></label>
-                <q-input
-                  v-model.number="endInput"
-                  type="number"
-                  dense
-                  outlined
-                  min="0"
-                  step="0.01"
-                  @update:model-value="handleEndInput"
-                />
-              </div>
-              <div class="control-group">
-                <label>封面时间: <span class="pill">{{ coverTimeDisplay }}</span></label>
-                <q-input
-                  v-model.number="coverInput"
-                  type="number"
-                  dense
-                  outlined
-                  min="0"
-                  step="0.01"
-                  @update:model-value="handleCoverInput"
-                />
-              </div>
-            </div>
+            <RangeControls
+              :start="startInput"
+              :end="endInput"
+              :cover="coverInput"
+              :start-label="startTimeDisplay"
+              :end-label="endTimeDisplay"
+              :cover-label="coverTimeDisplay"
+              @update:start="handleStartInput"
+              @update:end="handleEndInput"
+              @update:cover="handleCoverInput"
+            />
 
             <div class="status-text q-mt-sm">{{ rangeStatus }}</div>
           </q-card-section>
         </q-card>
 
         <div class="content-grid q-mt-lg">
-          <q-card flat bordered class="section-card">
-            <q-card-section class="q-gutter-sm">
-              <div class="section-title">时间轴压缩 / 拉伸</div>
-              <div class="row items-center q-gutter-sm">
-                <q-input
-                  v-model.number="targetLength"
-                  type="number"
-                  label="目标长度（秒）"
-                  min="0.5"
-                  step="0.1"
-                  outlined
-                  dense
-                  :disable="isConverting"
-                  @update:model-value="handleTargetLength"
-                />
-                <q-toggle v-model="autoSpeed" label="自动按目标长度计算倍速" @update:model-value="handleAutoSpeed" />
-              </div>
-              <div class="row items-center q-gutter-sm slider-row">
-                <div>倍速：</div>
-                <q-input
-                  v-model.number="speedInput"
-                  type="number"
-                  min="0.25"
-                  max="8"
-                  step="0.1"
-                  dense
-                  outlined
-                  :disable="isConverting"
-                  @update:model-value="handleSpeedInput"
-                  style="width: 120px"
-                />
-                <div class="pill">{{ speedLabel }}</div>
-              </div>
-              <div class="status-text">{{ speedStatus }}</div>
-            </q-card-section>
-          </q-card>
+          <SpeedControl
+            :target-length="targetLength"
+            :auto-speed="autoSpeed"
+            :speed-input="speedInput"
+            :speed-label="speedLabel"
+            :status-text="speedStatus"
+            :disabled="isConverting"
+            @update:target-length="handleTargetLength"
+            @update:auto-speed="handleAutoSpeed"
+            @update:speed-input="handleSpeedInput"
+          />
 
-          <q-card flat bordered class="section-card action-card">
-            <q-card-section class="q-gutter-md">
-              <div class="section-title">生成 Motion Photo</div>
-              <q-btn
-                color="primary"
-                unelevated
-                icon="play_arrow"
-                label="使用当前设置生成"
-                :disable="convertDisabled"
-                :loading="isConverting"
-                @click="convertToMotionPhoto"
-              />
-              <div class="status-text">{{ convertStatus }}</div>
-            </q-card-section>
-          </q-card>
+          <ActionPanel
+            :disabled="convertDisabled"
+            :loading="isConverting"
+            :status-text="convertStatus"
+            :progress-active="progressActive"
+            :progress-value="progressValue"
+            :progress-text="progressText"
+            @convert="convertToMotionPhoto"
+          />
         </div>
       </q-page>
     </q-page-container>
@@ -173,20 +115,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { createFFmpeg, fetchFile, type FFmpeg } from "@ffmpeg/ffmpeg";
 import { Notify } from "quasar";
 import VideoTimeline from "./components/VideoTimeline.vue";
-
-const ffmpeg: FFmpeg = createFFmpeg({
-  log: false,
-  corePath: "https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js",
-});
-
-const INPUT_FILE = "input.bin";
-const SOURCE_FILE = "source.mp4";
-const CLIP_FILE = "clip.mp4";
-const COVER_FILE = "cover.jpg";
-const THUMB_FILE = "thumb.jpg";
+import SpeedControl from "./components/SpeedControl.vue";
+import ActionPanel from "./components/ActionPanel.vue";
+import RangeControls from "./components/RangeControls.vue";
+import { assembleMotionPhoto, createFfmpegClient } from "./services/ffmpegClient";
 
 const selectedFile = ref<File | null>(null);
 const videoRef = ref<HTMLVideoElement | null>(null);
@@ -219,12 +153,28 @@ const currentFileName = ref<string | null>(null);
 const currentVideoUrl = ref<string | null>(null);
 
 const convertDisabled = ref(true);
+const progressActive = ref(false);
+const progressValue = ref(0);
+const progressLabel = ref("");
+let progressBase = 0;
+let progressSpan = 1;
+
+const ffmpegClient = createFfmpegClient({
+  onProgress: (ratio) => {
+    if (!progressActive.value) return;
+    const value = progressBase + ratio * progressSpan;
+    progressValue.value = Math.max(0, Math.min(1, value));
+  },
+});
 
 const startTimeDisplay = computed(() => `${rangeStartTime.value.toFixed(2)} s`);
 const endTimeDisplay = computed(() => `${rangeEndTime.value.toFixed(2)} s`);
 const coverTimeDisplay = computed(() => `${coverTimeValue.value.toFixed(2)} s`);
 const durationLabel = computed(() => `${videoDuration.value.toFixed(2)} s`);
 const speedLabel = computed(() => `${(Number(speedInput.value) || 1).toFixed(2)}x`);
+const progressText = computed(() =>
+  progressActive.value ? `${progressLabel.value || "处理中…"} ${(progressValue.value * 100).toFixed(0)}%` : ""
+);
 
 function setStatus(target: typeof fileStatus, text: string) {
   target.value = text || "";
@@ -239,6 +189,20 @@ function clampTime(time: number) {
   return Math.max(0, Math.min(time, videoDuration.value));
 }
 
+function setProgressStage(base: number, span: number, label: string) {
+  progressBase = base;
+  progressSpan = span;
+  progressLabel.value = label;
+  progressActive.value = true;
+  progressValue.value = base;
+}
+
+function clearProgress() {
+  progressActive.value = false;
+  progressValue.value = 0;
+  progressLabel.value = "";
+}
+
 async function ensureFfmpeg() {
   if (ffmpegReady.value) return;
   if (ffmpegLoading.value) {
@@ -250,20 +214,14 @@ async function ensureFfmpeg() {
   }
   ffmpegLoading.value = true;
   setStatus(fileStatus, "正在下载并初始化 ffmpeg.wasm（首次会稍慢）…");
-  await ffmpeg.load();
+  await ffmpegClient.ensureLoaded();
   ffmpegReady.value = true;
   ffmpegLoading.value = false;
   setStatus(fileStatus, "ffmpeg.wasm 初始化完成");
 }
 
 function cleanupFfmpegFiles() {
-  [INPUT_FILE, SOURCE_FILE, CLIP_FILE, COVER_FILE, THUMB_FILE].forEach((name) => {
-    try {
-      ffmpeg.FS("unlink", name);
-    } catch {
-      // ignore
-    }
-  });
+  ffmpegClient.cleanupFiles();
 }
 
 function resetUI() {
@@ -295,6 +253,9 @@ function resetUI() {
   coverInput.value = 0;
   speedInput.value = 1;
   convertDisabled.value = true;
+  progressActive.value = false;
+  progressValue.value = 0;
+  progressLabel.value = "";
 }
 
 function updateSpeedUI() {
@@ -364,204 +325,17 @@ async function getBlobDurationMs(blob: Blob, fallbackSeconds: number) {
   return Math.max(1, Math.round(fallbackSeconds * 1000));
 }
 
-function buildMotionXmpXml({
-  videoLength,
-  durationMs,
-  microVideoOffset,
-  thumbnailLength,
-}: {
-  videoLength: number;
-  durationMs: number;
-  microVideoOffset?: number;
-  thumbnailLength?: number;
-}) {
-  const xml = [
-    '<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">',
-    '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
-    '    <rdf:Description rdf:about=""',
-    '        xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"',
-    '        xmlns:Container="http://ns.google.com/photos/1.0/container/"',
-    '        xmlns:Item="http://ns.google.com/photos/1.0/container/item/"',
-    '        xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"',
-    '      hdrgm:Version="1.0"',
-    '      GCamera:MicroVideoVersion="1"',
-    '      GCamera:MicroVideo="1"',
-    `      GCamera:MicroVideoOffset="${microVideoOffset ?? videoLength}"`,
-    '      GCamera:MicroVideoPresentationTimestampUs="0">',
-    '      <Container:Directory>',
-    '        <rdf:Seq>',
-    '          <rdf:li rdf:parseType="Resource">',
-    '            <Container:Item',
-    '              Item:Semantic="Primary"',
-    '              Item:Mime="image/jpeg"/>',
-    '          </rdf:li>',
-    '          <rdf:li rdf:parseType="Resource">',
-    '            <Container:Item',
-    '              Item:Semantic="GainMap"',
-    '              Item:Mime="image/jpeg"',
-    `              Item:Length="${thumbnailLength ?? videoLength}"/>`,
-    '          </rdf:li>',
-    '        </rdf:Seq>',
-    '      </Container:Directory>',
-    '    </rdf:Description>',
-    '  </rdf:RDF>',
-    '</x:xmpmeta>',
-  ].join("\n");
-
-  return new TextEncoder().encode(xml);
-}
-
-function buildXmpSegment(xmpXml: Uint8Array) {
-  const header = new TextEncoder().encode("http://ns.adobe.com/xap/1.0/\x00");
-  const payload = new Uint8Array(header.length + xmpXml.length);
-  payload.set(header, 0);
-  payload.set(xmpXml, header.length);
-
-  const length = payload.length + 2;
-  if (length > 0xffff) {
-    throw new Error("XMP 段过长");
-  }
-
-  const segment = new Uint8Array(4 + payload.length);
-  segment[0] = 0xff;
-  segment[1] = 0xe1;
-  segment[2] = (length >> 8) & 0xff;
-  segment[3] = length & 0xff;
-  segment.set(payload, 4);
-  return segment;
-}
-
-function addMotionPhotoXmp(
-  jpegBytes: Uint8Array,
-  {
-    videoLength,
-    durationMs,
-    microVideoOffset,
-    thumbnailLength,
-  }: { videoLength: number; durationMs: number; microVideoOffset?: number; thumbnailLength?: number }
-) {
-  if (!(jpegBytes[0] === 0xff && jpegBytes[1] === 0xd8)) {
-    throw new Error("输入文件不是 JPEG");
-  }
-
-  const xmpXml = buildMotionXmpXml({
-    videoLength,
-    durationMs,
-    microVideoOffset,
-    thumbnailLength,
-  });
-  const xmpSegment = buildXmpSegment(xmpXml);
-
-  let insertPos = 2;
-  let pos = 2;
-  const data = jpegBytes;
-
-  while (pos < data.length - 1) {
-    if (data[pos] === 0xff) {
-      const marker = data[pos + 1];
-      if (marker === 0xda || marker === 0xd9) {
-        insertPos = pos;
-        break;
-      }
-      if (marker >= 0xe0 && marker <= 0xef) {
-        if (pos + 3 < data.length) {
-          const segLen = (data[pos + 2] << 8) | data[pos + 3];
-          pos += 2 + segLen;
-          insertPos = pos;
-          continue;
-        }
-      }
-      pos += 1;
-    } else {
-      pos += 1;
-    }
-  }
-
-  const out = new Uint8Array(insertPos + xmpSegment.length + (data.length - insertPos));
-  out.set(data.subarray(0, insertPos), 0);
-  out.set(xmpSegment, insertPos);
-  out.set(data.subarray(insertPos), insertPos + xmpSegment.length);
-  return out;
-}
-
-function assembleMotionPhoto(
-  coverBytes: Uint8Array,
-  videoBytes: Uint8Array,
-  thumbnailBytes: Uint8Array,
-  durationMs: number
-) {
-  const videoLength = videoBytes.length;
-  let microVideoOffset = videoLength;
-  let thumbSize = 0;
-  let prevThumbSize = 0;
-  let thumbnailWithXmp = thumbnailBytes;
-
-  for (let i = 0; i < 5; i += 1) {
-    thumbnailWithXmp = addMotionPhotoXmp(thumbnailBytes, {
-      videoLength,
-      durationMs,
-      microVideoOffset,
-    });
-    thumbSize = thumbnailWithXmp.length;
-    const newOffset = videoLength + thumbSize;
-    if (thumbSize === prevThumbSize) break;
-    prevThumbSize = thumbSize;
-    microVideoOffset = newOffset;
-  }
-
-  const coverWithXmp = addMotionPhotoXmp(coverBytes, {
-    videoLength,
-    durationMs,
-    microVideoOffset,
-    thumbnailLength: thumbSize,
-  });
-
-  thumbnailWithXmp = addMotionPhotoXmp(thumbnailBytes, {
-    videoLength,
-    durationMs,
-    microVideoOffset,
-  });
-
-  const result = new Uint8Array(coverWithXmp.length + videoBytes.length + thumbnailWithXmp.length);
-  let offset = 0;
-  result.set(coverWithXmp, offset);
-  offset += coverWithXmp.length;
-  result.set(videoBytes, offset);
-  offset += videoBytes.length;
-  result.set(thumbnailWithXmp, offset);
-  return result;
-}
-
 async function prepareSourceVideo(file: File) {
   await ensureFfmpeg();
   cleanupFfmpegFiles();
 
-  ffmpeg.FS("writeFile", INPUT_FILE, await fetchFile(file));
   setStatus(fileStatus, `已选择: ${file.name}，正在用 ffmpeg.wasm 转码…`);
+  setProgressStage(0, 1, "预处理转码中…");
 
-  await ffmpeg.run(
-    "-y",
-    "-i",
-    INPUT_FILE,
-    "-movflags",
-    "+faststart",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:v",
-    "libx264",
-    "-profile:v",
-    "baseline",
-    "-level",
-    "3.1",
-    "-r",
-    "30",
-    "-vf",
-    "scale=ceil(iw/2)*2:ceil(ih/2)*2",
-    SOURCE_FILE
-  );
-
-  const mp4Data = ffmpeg.FS("readFile", SOURCE_FILE);
+  const mp4Data = await ffmpegClient.transcodeSource(file);
   const mp4Blob = u8ToBlob(mp4Data, "video/mp4");
+  progressValue.value = 1;
+  progressLabel.value = "预处理完成";
 
   if (currentVideoUrl.value) {
     URL.revokeObjectURL(currentVideoUrl.value);
@@ -599,6 +373,7 @@ async function prepareSourceVideo(file: File) {
   updateSpeedUI();
 
   setStatus(fileStatus, `已选择: ${file.name}，转码完成，开始预览。`);
+  clearProgress();
 }
 
 async function convertToMotionPhoto() {
@@ -615,71 +390,15 @@ async function convertToMotionPhoto() {
   convertDisabled.value = true;
   isConverting.value = true;
   setStatus(convertStatus, "正在裁剪并生成 Motion Photo…");
+  setProgressStage(0, 0.7, "剪裁与转码中…");
 
   try {
-    const filterGraph =
-      Math.abs(speed - 1.0) > 1e-3
-        ? `setpts=PTS/${speed.toFixed(4)},scale=ceil(iw/2)*2:ceil(ih/2)*2`
-        : "scale=ceil(iw/2)*2:ceil(ih/2)*2";
-
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      rangeStartTime.value.toFixed(3),
-      "-to",
-      rangeEndTime.value.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-movflags",
-      "+faststart",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:v",
-      "libx264",
-      "-profile:v",
-      "baseline",
-      "-level",
-      "3.1",
-      "-r",
-      "30",
-      "-filter:v",
-      filterGraph,
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
-      CLIP_FILE
-    );
-
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      coverTimeValue.value.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "2",
-      COVER_FILE
-    );
-
-    await ffmpeg.run(
-      "-y",
-      "-ss",
-      coverTimeValue.value.toFixed(3),
-      "-i",
-      SOURCE_FILE,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "2",
-      THUMB_FILE
-    );
-
-    const clipBytes = ffmpeg.FS("readFile", CLIP_FILE);
-    const coverBytes = ffmpeg.FS("readFile", COVER_FILE);
-    const thumbBytes = ffmpeg.FS("readFile", THUMB_FILE);
+    const { clipBytes, coverBytes, thumbBytes } = await ffmpegClient.convertClipAndFrames({
+      rangeStart: rangeStartTime.value,
+      rangeEnd: rangeEndTime.value,
+      coverTime: coverTimeValue.value,
+      speed,
+    });
 
     const clipBlob = u8ToBlob(clipBytes, "video/mp4");
     const fallbackSeconds = Math.max(0.1, (rangeEndTime.value - rangeStartTime.value) / speed);
@@ -700,14 +419,18 @@ async function convertToMotionPhoto() {
 
     setStatus(convertStatus, "转换成功，文件已下载。");
     Notify.create({ message: "转换成功，文件已下载。", color: "positive" });
+    progressValue.value = 1;
+    progressLabel.value = "转换完成";
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : String(err);
     setStatus(convertStatus, `转换失败：${message}`);
     Notify.create({ message: `转换失败：${message}`, color: "negative" });
+    progressLabel.value = "转换失败";
   } finally {
     isConverting.value = false;
     convertDisabled.value = !previewReady.value;
+    setTimeout(() => clearProgress(), 500);
   }
 }
 
@@ -750,11 +473,13 @@ function handleSpeedInput(value: number | string | null) {
   if (previewReady.value) updateSpeedUI();
 }
 
-function handleTargetLength() {
+function handleTargetLength(value: number | string | null) {
+  targetLength.value = Number(value) || 0;
   if (previewReady.value) updateSpeedUI();
 }
 
-function handleAutoSpeed() {
+function handleAutoSpeed(value: boolean) {
+  autoSpeed.value = value;
   if (previewReady.value) updateSpeedUI();
 }
 

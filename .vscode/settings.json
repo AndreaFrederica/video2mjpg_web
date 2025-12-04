@@ -1,3 +1,14 @@
 {
-    "AndreaNovelHelper.workspaceDisabled": true
+    "AndreaNovelHelper.workspaceDisabled": true,
+    "cSpell.words": [
+        "COEP",
+        "faststart",
+        "hdrgm",
+        "libx",
+        "movflags",
+        "playhead",
+        "setpts",
+        "xmpmeta",
+        "xmptk"
+    ]
 }
