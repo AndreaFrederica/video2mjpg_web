@@ -28,10 +28,27 @@ dist
 
 ### 3. 部署后的重要设置
 
-#### 启用 COOP/COEP 头部
-由于此项目使用 FFmpeg.wasm 和 SharedArrayBuffer，需要特定的安全头部。
+#### 启用 COOP/COEP 头部（**必须配置**）
+由于此项目使用 FFmpeg.wasm 和 SharedArrayBuffer，需要特定的安全头部才能正常工作。
 
-在 `_headers` 文件中已配置，Cloudflare Pages 会自动应用。
+**头部要求：**
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: require-corp`
+- `Cross-Origin-Resource-Policy: cross-origin`
+
+这些头部已在 `_headers` 文件中配置，Cloudflare Pages 会自动应用。
+
+**验证头部是否生效：**
+1. 打开浏览器开发者工具（F12）
+2. 访问你的网站 `https://v2mp.sirrus.cc`
+3. 进入 Network 标签
+4. 查看任何响应的 Response Headers
+5. 确认上述三个头部都存在
+
+如果头部未生效，可能需要：
+- 清除浏览器缓存（Ctrl+Shift+Delete）
+- 重新部署项目
+- 等待 DNS 缓存清除（最多 24 小时）
 
 #### 自定义域名
 项目已配置使用域名：**`v2mp.sirrus.cc`**
@@ -53,6 +70,13 @@ dist
 
 ### 5. 常见问题
 
+**Q: SharedArrayBuffer is not defined**
+A: 这说明 COOP/COEP 头部没有正确配置。
+   - 检查 `_headers` 文件是否在根目录且正确配置
+   - 在浏览器开发者工具中验证 Response Headers
+   - 尝试清除浏览器缓存并重新访问
+   - 确认 Cloudflare Pages 已重新部署（查看部署日志）
+
 **Q: 为什么 FFmpeg 加载失败？**
 A: 确保 COOP/COEP 头部正确配置。检查浏览器控制台是否有相关错误。
 
@@ -64,6 +88,10 @@ A: 每次推送到主分支时，Cloudflare Pages 会自动触发部署。
 
 **Q: 域名没有指向？**
 A: 确保在 Cloudflare DNS 设置中添加了 CNAME 记录，或在 Pages 项目中验证了自定义域名。
+
+**Q: 本地开发时没有 SharedArrayBuffer 错误，部署后出现？**
+A: 这是因为本地开发服务器有不同的头部配置。部署到生产环境需要正确的 COOP/COEP 头部。
+   确保 `_headers` 文件已提交到 Git 并推送到部署分支。
 
 ## 本地测试
 
