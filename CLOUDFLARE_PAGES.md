@@ -26,29 +26,43 @@ dist
 **Environment variables:**
 无需额外配置
 
-### 3. 部署后的重要设置
+### 3. 构建流程中的自动配置
+当你执行 `pnpm run build` 时，Vite 会**自动**：
+- ✅ 构建应用到 `dist/` 目录
+- ✅ 复制 `_headers` 文件到 `dist/_headers`
+- ✅ 复制 `_redirects` 文件到 `dist/_redirects`
+
+这保证了 Cloudflare Pages 能正确读取配置文件。
+
+你会看到构建输出中出现：
+```
+✓ 已复制 _headers 到 dist/
+✓ 已复制 _redirects 到 dist/
+```
+
 
 #### 启用 COOP/COEP 头部（**必须配置**）
 由于此项目使用 FFmpeg.wasm 和 SharedArrayBuffer，需要特定的安全头部才能正常工作。
 
-**头部要求：**
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-- `Cross-Origin-Resource-Policy: cross-origin`
+**头部要求（已自动配置）：**
+- `Cross-Origin-Opener-Policy: same-origin` - 隔离浏览器上下文
+- `Cross-Origin-Embedder-Policy: require-corp` - 限制跨域资源加载
+- `Cross-Origin-Resource-Policy: same-origin` - 允许同源资源访问
 
-这些头部已在 `_headers` 文件中配置，Cloudflare Pages 会自动应用。
+这些头部已在 `_headers` 文件中配置，构建时会自动复制到 `dist/` 目录，Cloudflare Pages 会自动应用。
 
 **验证头部是否生效：**
 1. 打开浏览器开发者工具（F12）
 2. 访问你的网站 `https://v2mp.sirrus.cc`
 3. 进入 Network 标签
 4. 查看任何响应的 Response Headers
-5. 确认上述三个头部都存在
+5. 确认存在 `cross-origin-opener-policy` 和 `cross-origin-embedder-policy` 头部
 
-如果头部未生效，可能需要：
-- 清除浏览器缓存（Ctrl+Shift+Delete）
-- 重新部署项目
-- 等待 DNS 缓存清除（最多 24 小时）
+**在控制台验证 SharedArrayBuffer 是否可用：**
+```javascript
+console.log(crossOriginIsolated);  // 应该输出 true
+console.log(typeof SharedArrayBuffer);  // 应该输出 "function"
+```
 
 #### 自定义域名
 项目已配置使用域名：**`v2mp.sirrus.cc`**
