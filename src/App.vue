@@ -46,6 +46,18 @@
                 <video ref="videoRef" class="preview-video" controls playsinline></video>
               </div>
               <div class="status-text">{{ videoStatus }}</div>
+              <q-linear-progress
+                v-if="isPrepareProgress"
+                :value="progressValue"
+                color="primary"
+                track-color="grey-3"
+                size="md"
+                rounded
+                stripe
+                :indeterminate="progressValue <= 0"
+                :label="progressText"
+                class="q-mt-sm"
+              />
             </q-card-section>
           </q-card>
         </div>
@@ -102,7 +114,7 @@
             :disabled="convertDisabled"
             :loading="isConverting"
             :status-text="convertStatus"
-            :progress-active="progressActive"
+            :progress-active="isConvertProgress"
             :progress-value="progressValue"
             :progress-text="progressText"
             @convert="convertToMotionPhoto"
@@ -156,6 +168,7 @@ const convertDisabled = ref(true);
 const progressActive = ref(false);
 const progressValue = ref(0);
 const progressLabel = ref("");
+const progressContext = ref<"none" | "prepare" | "convert">("none");
 let progressBase = 0;
 let progressSpan = 1;
 
@@ -175,6 +188,8 @@ const speedLabel = computed(() => `${(Number(speedInput.value) || 1).toFixed(2)}
 const progressText = computed(() =>
   progressActive.value ? `${progressLabel.value || "处理中…"} ${(progressValue.value * 100).toFixed(0)}%` : ""
 );
+const isPrepareProgress = computed(() => progressActive.value && progressContext.value === "prepare");
+const isConvertProgress = computed(() => progressActive.value && progressContext.value === "convert");
 
 function setStatus(target: typeof fileStatus, text: string) {
   target.value = text || "";
@@ -189,11 +204,12 @@ function clampTime(time: number) {
   return Math.max(0, Math.min(time, videoDuration.value));
 }
 
-function setProgressStage(base: number, span: number, label: string) {
+function setProgressStage(base: number, span: number, label: string, context: "prepare" | "convert" = "convert") {
   progressBase = base;
   progressSpan = span;
   progressLabel.value = label;
   progressActive.value = true;
+  progressContext.value = context;
   progressValue.value = base;
 }
 
@@ -201,6 +217,7 @@ function clearProgress() {
   progressActive.value = false;
   progressValue.value = 0;
   progressLabel.value = "";
+  progressContext.value = "none";
 }
 
 async function ensureFfmpeg() {
@@ -330,7 +347,7 @@ async function prepareSourceVideo(file: File) {
   cleanupFfmpegFiles();
 
   setStatus(fileStatus, `已选择: ${file.name}，正在用 ffmpeg.wasm 转码…`);
-  setProgressStage(0, 1, "预处理转码中…");
+  setProgressStage(0, 1, "预处理转码中…", "prepare");
 
   const mp4Data = await ffmpegClient.transcodeSource(file);
   const mp4Blob = u8ToBlob(mp4Data, "video/mp4");
@@ -390,7 +407,7 @@ async function convertToMotionPhoto() {
   convertDisabled.value = true;
   isConverting.value = true;
   setStatus(convertStatus, "正在裁剪并生成 Motion Photo…");
-  setProgressStage(0, 0.7, "剪裁与转码中…");
+  setProgressStage(0, 1, "剪裁与转码中…", "convert");
 
   try {
     const { clipBytes, coverBytes, thumbBytes } = await ffmpegClient.convertClipAndFrames({
