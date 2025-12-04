@@ -1,4 +1,5 @@
-import { createFFmpeg, fetchFile, type FFmpeg } from "@ffmpeg/ffmpeg";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile } from "@ffmpeg/util";
 
 export const INPUT_FILE = "input.bin";
 export const SOURCE_FILE = "source.mp4";
@@ -34,7 +35,7 @@ export type FfmpegClient = {
   generateThumbnail: (timestamp: number) => Promise<Uint8Array>;
 };
 
-const DEFAULT_CORE_PATH = "https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js";
+const DEFAULT_CORE_PATH = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.0/dist/umd/ffmpeg-core.js";
 
 const formatTime = (ms: number): string => {
   const seconds = Math.floor(ms / 1000);
@@ -49,10 +50,7 @@ const formatTime = (ms: number): string => {
 };
 
 export function createFfmpegClient(options: Options = {}): FfmpegClient {
-  const ffmpeg: FFmpeg = createFFmpeg({
-    log: false,
-    corePath: options.corePath ?? DEFAULT_CORE_PATH,
-  });
+  const ffmpeg = new FFmpeg();
 
   const files = [INPUT_FILE, SOURCE_FILE, CLIP_FILE, COVER_FILE, THUMB_FILE];
   let ready = false;
@@ -66,24 +64,25 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       return;
     }
     loadingPromise = (async () => {
+      // 0.12.x - 使用默认的核心加载方式
       await ffmpeg.load();
       if (options.onProgress) {
         startTime = performance.now();
-        ffmpeg.setProgress(({ ratio }) => {
+        ffmpeg.on("progress", ({ progress }: { progress: number }) => {
           const now = performance.now();
           const elapsed = now - startTime;
-          const percentage = Math.round(ratio * 100);
+          const percentage = Math.round(progress * 100);
           let remaining = 0;
           let eta = "计算中...";
 
-          if (ratio > 0.01 && ratio < 1) {
-            const estimated = elapsed / ratio;
+          if (progress > 0.01 && progress < 1) {
+            const estimated = elapsed / progress;
             remaining = Math.max(0, estimated - elapsed);
             eta = formatTime(remaining);
           }
 
           options.onProgress!({
-            ratio,
+            ratio: progress,
             percentage,
             elapsed: Math.round(elapsed),
             remaining: Math.round(remaining),
@@ -102,7 +101,7 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
   const cleanupFiles = (names: string[] = files) => {
     names.forEach((name) => {
       try {
-        ffmpeg.FS("unlink", name);
+        ffmpeg.deleteFile(name);
       } catch {
         // ignore
       }
@@ -112,8 +111,8 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
   const transcodeSource = async (file: File) => {
     await ensureLoaded();
     cleanupFiles();
-    ffmpeg.FS("writeFile", INPUT_FILE, await fetchFile(file));
-    await ffmpeg.run(
+    ffmpeg.writeFile(INPUT_FILE, await fetchFile(file));
+    await ffmpeg.exec([
       "-y",
       "-i",
       INPUT_FILE,
@@ -131,9 +130,9 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       "30",
       "-vf",
       "scale=ceil(iw/2)*2:ceil(ih/2)*2",
-      SOURCE_FILE
-    );
-    return ffmpeg.FS("readFile", SOURCE_FILE);
+      SOURCE_FILE,
+    ]);
+    return (await ffmpeg.readFile(SOURCE_FILE)) as Uint8Array;
   };
 
   const convertClipAndFrames = async ({
@@ -154,7 +153,7 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
         ? `setpts=PTS/${speed.toFixed(4)},scale=ceil(iw/2)*2:ceil(ih/2)*2`
         : "scale=ceil(iw/2)*2:ceil(ih/2)*2";
 
-    await ffmpeg.run(
+    await ffmpeg.exec([
       "-y",
       "-ss",
       rangeStart.toFixed(3),
@@ -180,10 +179,10 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       "aac",
       "-b:a",
       "128k",
-      CLIP_FILE
-    );
+      CLIP_FILE,
+    ]);
 
-    await ffmpeg.run(
+    await ffmpeg.exec([
       "-y",
       "-ss",
       coverTime.toFixed(3),
@@ -193,10 +192,10 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       "1",
       "-q:v",
       "2",
-      COVER_FILE
-    );
+      COVER_FILE,
+    ]);
 
-    await ffmpeg.run(
+    await ffmpeg.exec([
       "-y",
       "-ss",
       coverTime.toFixed(3),
@@ -206,13 +205,13 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
       "1",
       "-q:v",
       "2",
-      THUMB_FILE
-    );
+      THUMB_FILE,
+    ]);
 
     return {
-      clipBytes: ffmpeg.FS("readFile", CLIP_FILE),
-      coverBytes: ffmpeg.FS("readFile", COVER_FILE),
-      thumbBytes: ffmpeg.FS("readFile", THUMB_FILE),
+      clipBytes: (await ffmpeg.readFile(CLIP_FILE)) as Uint8Array,
+      coverBytes: (await ffmpeg.readFile(COVER_FILE)) as Uint8Array,
+      thumbBytes: (await ffmpeg.readFile(THUMB_FILE)) as Uint8Array,
     };
   };
 
@@ -222,7 +221,7 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
     
     try {
       // 从已经存在的 SOURCE_FILE 提取帧
-      await ffmpeg.run(
+      await ffmpeg.exec([
         "-ss",
         timestamp.toString(),
         "-i",
@@ -233,14 +232,14 @@ export function createFfmpegClient(options: Options = {}): FfmpegClient {
         "scale=160:-1",
         "-q:v",
         "5",
-        thumbName
-      );
+        thumbName,
+      ]);
       
-      const data = ffmpeg.FS("readFile", thumbName);
+      const data = (await ffmpeg.readFile(thumbName)) as Uint8Array;
       
       // 清理生成的文件
       try {
-        ffmpeg.FS("unlink", thumbName);
+        ffmpeg.deleteFile(thumbName);
       } catch {
         // ignore
       }
